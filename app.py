@@ -134,14 +134,16 @@ if user_input := st.chat_input("英語でメッセージを入力してね（写
 
     contents_payload = []
 
-    # 画像・PDFが存在する場合はペイロードに追加
+    # 画像・PDFが存在する場合は正しいPartオブジェクトとして追加
     if uploaded_file:
         file_bytes = uploaded_file.read()
         mime_type = uploaded_file.type
-        contents_payload.append({
-            "mime_type": mime_type,
-            "data": file_bytes
-        })
+        contents_payload.append(
+            types.Part.from_bytes(
+                data=file_bytes,
+                mime_type=mime_type,
+            )
+        )
 
     text_prompt = user_input if user_input else "添付されたファイルの手書き英文を読み取って添削し、返答してください。"
     contents_payload.append(text_prompt)
@@ -173,9 +175,9 @@ if user_input := st.chat_input("英語でメッセージを入力してね（写
     with st.chat_message("assistant", avatar="🤖"):
         with st.spinner("AI先生が考え中..."):
             response = client.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemini-3.5-flash',
                 contents=contents_payload,
-                config=genai.types.GenerateContentConfig(
+                config=types.GenerateContentConfig(
                     system_instruction=system_instruction,
                     temperature=0.7,
                 ),
