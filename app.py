@@ -4,7 +4,7 @@ from google import genai
 from google.genai import types
 import datetime
 
-st.set_page_config(page_title="英語添削＆チャット システム", page_icon="🏫", layout="wide")
+st.set_page_config(page_title="Talky AI 2.0", page_icon="🏫", layout="wide")
 
 GAS_URL = st.secrets.get("GAS_URL", "")
 
