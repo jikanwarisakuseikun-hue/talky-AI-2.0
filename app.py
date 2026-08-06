@@ -2,236 +2,221 @@ import streamlit as st
 import requests
 from google import genai
 from google.genai import types
+import datetime
 
-# 画面設定
-st.set_page_config(page_title="中学生向け 英語添削＆チャット", page_icon="🏫", layout="centered")
+st.set_page_config(page_title="英語添削＆チャット システム", page_icon="🏫", layout="wide")
+
+GAS_URL = st.secrets.get("GAS_URL", "")
 
 # --------------------------------------------------
-# 1. パスワード認証機能（先生ごとのAPI・GASを切り替え）
+# 1. ログイン認証画面
 # --------------------------------------------------
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 if not st.session_state.authenticated:
-    st.title("🏫 英語添削＆チャット (先生ログイン)")
-    input_password = st.text_input("先生用パスワードを入力してください：", type="password")
+    st.title("🏫 英語添削＆チャット ログイン")
+    input_id = st.text_input("ID（教師ID または 生徒ID）：")
+    input_pass = st.text_input("パスワード：", type="password")
     
     if st.button("ログイン"):
-        teachers = st.secrets.get("teachers", {})
-        matched_teacher = None
-        
-        for key, config in teachers.items():
-            if config.get("password") == input_password:
-                matched_teacher = config
-                break
-        
-        if matched_teacher:
-            st.session_state.authenticated = True
-            st.session_state.gemini_api_key = matched_teacher.get("gemini_api_key")
-            st.session_state.gas_url = matched_teacher.get("gas_url")
-            st.success("ログイン成功！")
-            st.rerun()
-        else:
-            st.error("パスワードが正しくありません。")
+        try:
+            res_schools = requests.get(f"{GAS_URL}?action=getSchools", timeout=10)
+            schools = res_schools.json()
+            
+            matched_user = None
+            matched_school = None
+            
+            for s in schools:
+                s_name = s.get("SchoolName")
+                res_users = requests.get(f"{GAS_URL}?action=getUsers&schoolName={s_name}", timeout=10)
+                users = res_users.json()
+                for u in users:
+                    if str(u.get("ID")) == str(input_id) and str(u.get("Password")) == str(input_pass):
+                        matched_user = u
+                        matched_school = s_name
+                        break
+                if matched_user:
+                    break
+            
+            if matched_user:
+                st.session_state.authenticated = True
+                st.session_state.role = matched_user.get("Role")
+                st.session_state.user_id = matched_user.get("ID")
+                st.session_state.user_name = matched_user.get("Name", "")
+                st.session_state.school_name = matched_school
+                
+                if st.session_state.role == "student":
+                    st.session_state.class_name = matched_user.get("Class")
+                    st.session_state.student_number = matched_user.get("StudentNumber")
+                else:
+                    st.session_state.class_name = ""
+                    st.session_state.student_number = ""
+                
+                st.success("ログイン成功！")
+                st.rerun()
+            else:
+                st.error("IDまたはパスワードが正しくありません。")
+        except Exception as e:
+            st.error(f"認証中にエラーが発生しました: {e}")
     st.stop()
 
-# --------------------------------------------------
-# 2. ログイン後の変数セット
-# --------------------------------------------------
-GAS_URL = st.session_state.gas_url
-GEMINI_API_KEY = st.session_state.gemini_api_key
+school_param = st.session_state.get('school_name')
 
-st.title("🏫 英語添削＆チャット")
+# --------------------------------------------------
+# お題データの取得（Topicsシートからクラス担当のTeacherIDを特定）
+# --------------------------------------------------
+try:
+    res_topics = requests.get(f"{GAS_URL}?action=getTopics&schoolName={school_param}", timeout=10)
+    all_topics = res_topics.json()
+except Exception:
+    all_topics = []
 
-# ログアウトボタン（サイドバー）
+assigned_teacher_id = "default"
+if st.session_state.get("role") == "student":
+    my_class = st.session_state.get("class_name")
+    my_class_topics = [t for t in all_topics if str(t.get("Class")) == str(my_class)]
+    if my_class_topics:
+        assigned_teacher_id = my_class_topics[0].get("TeacherID", "default")
+    topic_titles = [t.get("Topic") for t in my_class_topics] if my_class_topics else ["フリートーク"]
+else:
+    assigned_teacher_id = st.session_state.get("user_id")
+    topic_titles = list(set([t.get("Topic") for t in all_topics])) if all_topics else ["フリートーク"]
+
+st.session_state.assigned_teacher_id = assigned_teacher_id
+
+# Secretsから対応するTeacherIDのAPIキーを取得
+active_api_key = st.secrets.get("teachers", {}).get(assigned_teacher_id, {}).get("gemini_api_key", st.secrets.get("DEFAULT_API_KEY", ""))
+gemini_client = genai.Client(api_key=active_api_key)
+
+# --------------------------------------------------
+# サイドバー情報表示
+# --------------------------------------------------
+st.sidebar.title("📌 アカウント情報")
+st.sidebar.write(f"**学校:** {school_param}")
+if st.session_state.get('role') == 'student':
+    st.sidebar.write(f"**クラス:** {st.session_state.get('class_name')}")
+    st.sidebar.write(f"**名簿番号:** {st.session_state.get('student_number')}番")
+st.sidebar.write(f"**氏名:** {st.session_state.get('user_name')}")
+st.sidebar.info(f"🔑 **担当AI (TeacherID):** `{assigned_teacher_id}`")
+
 if st.sidebar.button("ログアウト"):
     st.session_state.authenticated = False
     st.rerun()
 
-# Gemini APIクライアントの初期化
-client = genai.Client(api_key=GEMINI_API_KEY)
-
 # --------------------------------------------------
-# 3. お題データの取得（GAS経由）
+# 2. 教師画面
 # --------------------------------------------------
-@st.cache_data(ttl=60)
-def load_topics(url):
-    try:
-        response = requests.get(url)
-        data = response.json()
-        if isinstance(data, list):
-            return data
-        return []
-    except Exception as e:
-        st.error(f"お題の読み込みに失敗しました: {e}")
-        return []
-
-topics = load_topics(GAS_URL)
-
-# --------------------------------------------------
-# 4. 生徒情報＆お題選択UI（KeyError防止付き）
-# --------------------------------------------------
-if topics:
-    raw_class_list = [t.get('class') for t in topics if isinstance(t, dict) and t.get('class')]
+if st.session_state.get("role") == "teacher":
+    st.title(f"👩‍🏫 教師用ダッシュボード ({school_param} / {st.session_state.get('user_name')}先生)")
     
-    if raw_class_list:
-        class_list = sorted(list(set(raw_class_list)))
-        selected_class = st.selectbox("あなたのクラスを選んでね：", class_list)
+    tab1, tab2, tab3 = st.tabs(["📊 クラス別会話ログ", "📝 お題の管理", "📷 紙媒体の英作文評価"])
+    
+    with tab1:
+        st.subheader("生徒の会話ログ（クラス別タブから集約）")
+        try:
+            res = requests.get(f"{GAS_URL}?action=getLogs&schoolName={school_param}", timeout=10)
+            logs = res.json()
+            if logs:
+                st.dataframe(logs)
+            else:
+                st.info("まだログはありません。")
+        except Exception as e:
+            st.warning(f"ログの取得に失敗しました: {e}")
+
+    with tab2:
+        st.subheader("お題の管理 (Topicsシート)")
+        if all_topics:
+            st.dataframe(all_topics)
+        else:
+            st.info("お題データがありません。")
+            
+        with st.form("topic_form"):
+            st.write("#### 新規お題の追加")
+            t_class = st.text_input("対象クラス（例: 1B）")
+            t_topic = st.text_input("お題タイトル")
+            t_grammar = st.text_input("ターゲット文法")
+            if st.form_submit_button("お題を登録する"):
+                payload = {
+                    "action": "addTopic",
+                    "schoolName": school_param,
+                    "class_name": t_class,
+                    "topic": t_topic,
+                    "target_grammar": t_grammar,
+                    "teacher_id": st.session_state.user_id
+                }
+                requests.post(GAS_URL, json=payload)
+                st.success("お題を追加しました！")
+                st.rerun()
+
+    with tab3:
+        st.subheader("📷 紙媒体の英作文一括評価")
+        uploaded_paper = st.file_uploader("ノートやプリントの画像をアップロード", type=["jpg", "jpeg", "png", "pdf"])
+        paper_topic = st.text_input("お題・テーマ", value="自由記述")
         
-        class_topics = [t for t in topics if isinstance(t, dict) and t.get('class') == selected_class]
-        topic_options = [t.get('topic', 'お題なし') for t in class_topics]
-        
-        selected_topic_idx = st.selectbox(
-            "本日のお題を選んでね：", 
-            range(len(topic_options)), 
-            format_func=lambda x: topic_options[x]
-        )
-        current_topic = class_topics[selected_topic_idx]
-        
-        st.info(f"🎯 **ターゲット文法:** {current_topic.get('target_grammar', '自由')}")
-    else:
-        st.warning("スプレッドシートから 'class' データを取得できませんでした。1行目のヘッダー名を確認してください。")
-        current_topic = {"topic": "フリートーク", "target_grammar": "自由"}
-        selected_class = "不明"
+        if uploaded_paper and st.button("AIで添削・評価する"):
+            with st.spinner("AIが解析中..."):
+                response = gemini_client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=[
+                        types.Part.from_bytes(data=uploaded_paper.read(), mime_type=uploaded_paper.type),
+                        f"この手書き/印刷された英作文を読み取り、お題「{paper_topic}」に沿って中学生向けに優しく添削・評価してください。"
+                    ]
+                )
+                st.markdown("### 📋 添削・評価結果")
+                st.markdown(response.text)
+
+# --------------------------------------------------
+# 3. 生徒画面
+# --------------------------------------------------
 else:
-    current_topic = {"topic": "フリートーク", "target_grammar": "自由"}
-    selected_class = "不明"
-
-# 出席番号（プルダウン選択：1番〜50番）
-student_numbers = [f"{i} 番" for i in range(1, 51)]
-selected_student_number = st.selectbox("出席番号を選んでね：", student_numbers)
-
-st.divider()
-
-# --------------------------------------------------
-# 5. LINE風チャット画面
-# --------------------------------------------------
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-# 過去の会話ログを表示
-for message in st.session_state.messages:
-    avatar = "🧑‍🎓" if message["role"] == "user" else "🤖"
-    with st.chat_message(message["role"], avatar=avatar):
-        st.markdown(message["content"])
-
-# 会話開始前（ログが0件の時）のみアップロード枠を表示
-uploaded_file = None
-if len(st.session_state.messages) == 0:
-    uploaded_file = st.file_uploader(
-        "📷 ノートの写真やPDFを添付できるよ（任意）", 
-        type=["jpg", "jpeg", "png", "pdf"]
-    )
-
-# チャット入力欄
-if user_input := st.chat_input("英語でメッセージを入力してね（写真添付時は空欄でもOK）..."):
+    st.title("🏫 中学生向け 英語添削チャット")
+    st.write(f"ようこそ、**{school_param} {st.session_state.get('class_name')}クラス 名簿{st.session_state.get('student_number')}番 {st.session_state.get('user_name')}さん**")
     
-    # ユーザー入力を画面に表示
-    with st.chat_message("user", avatar="🧑‍🎓"):
-        if uploaded_file:
-            st.caption(f"📎 添付ファイル: {uploaded_file.name}")
-        st.markdown(user_input if user_input else "（画像を送信しました）")
-
-    contents_payload = []
-
-    # 画像・PDFが存在する場合は正しいPartオブジェクトとして追加
-    if uploaded_file:
-        file_bytes = uploaded_file.read()
-        mime_type = uploaded_file.type
-        contents_payload.append(
-            types.Part.from_bytes(
-                data=file_bytes,
-                mime_type=mime_type,
-            )
-        )
-
-    text_prompt = user_input if user_input else "添付されたファイルの手書き英文を読み取って添削し、返答してください。"
-    contents_payload.append(text_prompt)
-
-    # システムプロンプト（和訳なし・ネイティブの友達設定）
-    system_instruction = f"""
-    あなたは日本の中学校の英語の先生であり、話しかけやすいフレンドリーなネイティブのお友達です。
+    selected_topic = st.selectbox("本日のお題を選んでね：", topic_titles)
     
-    【現在の学習お題】: {current_topic.get('topic', 'フリートーク')}
-    【意識させるターゲット文法】: {current_topic.get('target_grammar', '自由')}
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
 
-    生徒から画像やPDF、または英文テキストが送られてきたら、以下のフォーマット厳守で返答してください。
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"], avatar="🧑‍🎓" if msg["role"]=="user" else "🤖"):
+            st.markdown(msg["content"])
 
-    ### 📖 あなたが書いた英文（読み取り結果）
-    * 画像やPDFが添付されている場合のみ表示。読み取った英文をここに正確に書き出してください（誤りがあってもそのまま書き出す）。
+    if user_input := st.chat_input("英語でメッセージを入力してね..."):
+        with st.chat_message("user", avatar="🧑‍🎓"):
+            st.markdown(user_input)
+        
+        with st.chat_message("assistant", avatar="🤖"):
+            with st.spinner("AI先生が考え中..."):
+                response = gemini_client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=user_input,
+                    config=types.GenerateContentConfig(
+                        system_instruction="あなたはフレンドリーな英語の先生です。中学生の英語を優しく添削し、英語で1〜2文返答してください。"
+                    )
+                )
+                bot_res = response.text
+                st.markdown(bot_res)
+        
+        # 生徒の所属クラス名（例: "1B"）のタブへ自動保存
+        try:
+            now_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            payload = {
+                "action": "addLog",
+                "schoolName": school_param,
+                "timestamp": now_time,
+                "className": st.session_state.get("class_name"),
+                "studentNumber": st.session_state.get("student_number"),
+                "name": st.session_state.get("user_name"),
+                "topic": selected_topic,
+                "userInput": user_input,
+                "botResponse": bot_res,
+                "teacherComment": ""
+            }
+            requests.post(GAS_URL, json=payload, timeout=5)
+        except Exception:
+            pass
 
-    ### 📝 添削とアドバイス
-    * **評価:** 最初に生徒をしっかり褒めるコメント（絵文字を使って明るく）
-    * **ポイント:** 文法やスペルの修正アドバイス。ターゲット文法（{current_topic.get('target_grammar', '自由')}）が正しく使えているかもチェック。中学生にわかりやすい日本語で短く解説する。
-
-    ---
-    ### 💬 返事
-    生徒の発言に対する返答を英語で1〜2文で書く。
-    最後に会話が続くような簡単で答えやすい質問を1つ入れる（中学生レベルの英単語・文法のみ使用）。
-    ※日本語訳（和訳）は一切添えず、英語のみで出力してください。
-    """
-
-    # AIからの返答を取得・表示
-    with st.chat_message("assistant", avatar="🤖"):
-        with st.spinner("AI先生が考え中..."):
-            response = client.models.generate_content(
-                model='gemini-3.5-flash',
-                contents=contents_payload,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    temperature=0.7,
-                ),
-            )
-            bot_response = response.text
-            st.markdown(bot_response)
-
-    # 送信されたテキスト表記の整理
-    display_user_msg = f"[ファイル添付] {user_input}" if uploaded_file else user_input
-
-    # ログインした先生個人のスプレッドシート（GAS）へログ送信
-    try:
-        log_data = {
-            "className": selected_class,
-            "studentNumber": selected_student_number,
-            "topic": current_topic.get('topic', 'フリートーク'),
-            "userInput": display_user_msg,
-            "botResponse": bot_response
-        }
-        requests.post(GAS_URL, json=log_data, timeout=5)
-    except Exception as e:
-        pass
-
-    # 会話履歴に追加保存
-    st.session_state.messages.append({"role": "user", "content": display_user_msg})
-    st.session_state.messages.append({"role": "assistant", "content": bot_response})
-    
-    # 画面を再描画して状態を確定
-    st.rerun()
-
-# --------------------------------------------------
-# 6. チャット入力欄の下に固定表示するフッター（著作権表記）
-# --------------------------------------------------
-footer_css = """
-<style>
-    .stChatInputContainer {
-        bottom: 25px !important;
-    }
-    .custom-footer {
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        width: 100%;
-        background-color: transparent;
-        color: #888888;
-        text-align: center;
-        font-size: 0.75rem;
-        padding: 4px 0;
-        z-index: 999999;
-        pointer-events: none;
-    }
-</style>
-<div class="custom-footer">
-    © 2026 English Chat App. All Rights Reserved.
-</div>
-"""
-st.markdown(footer_css, unsafe_allow_html=True)
+        st.session_state.messages.append({"role": "user", "content": user_input})
+        st.session_state.messages.append({"role": "assistant", "content": bot_res})
+        st.rerun()
