@@ -176,7 +176,7 @@ if st.session_state.get("role") == "teacher":
                     model='gemini-2.5-flash',
                     contents=[
                         types.Part.from_bytes(data=uploaded_paper.read(), mime_type=uploaded_paper.type),
-                        f"この手書き/印刷された英作文を読み取り、お題「{paper_topic}」に沿って中学生向けに優しく添削・評価してください。"
+                        f"This is a handwritten English composition about '{paper_topic}'. Please evaluate it and give advice in Japanese."
                     ]
                 )
                 st.markdown("### 📋 添削・評価結果")
@@ -191,6 +191,15 @@ else:
     
     selected_topic = st.selectbox("本日のお題を選んでね：", topic_titles)
     
+    # お題が変更された場合に会話履歴を自動リセット
+    if "current_topic" not in st.session_state:
+        st.session_state.current_topic = selected_topic
+
+    if st.session_state.current_topic != selected_topic:
+        st.session_state.current_topic = selected_topic
+        st.session_state.messages = []
+        st.rerun()
+
     # 選択されたお題に紐づくターゲット文法を特定する
     target_grammar = "特になし（自由な会話）"
     for t in my_class_topics:
@@ -212,38 +221,45 @@ else:
         with st.chat_message("assistant", avatar="🤖"):
             with st.spinner("AI先生が考え中..."):
                 
+                # これまでの会話履歴を文字列としてまとめる
+                chat_history_text = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
+                chat_history_text += f"\nuser: {user_input}"
+
                 # レベルに応じたプロンプト（システム指示）の切り替え
                 if "レベル1" in student_level:
                     sys_instruction = (
                         f"あなたは非常に優しい英語の先生です。\n"
                         f"現在のお題: 「{selected_topic}」 / ターゲット文法: 「{target_grammar}」\n"
-                        f"【レベル1設定】生徒は英語がすごくだいぶ苦手です。生徒のメッセージを受け取ったら、即座に日本語で「【即時添削】」を提示し、どこを直すと良いか優しく解説してから、英語で1文だけ簡単な返事や問いかけをしてください。"
+                        f"【レベル1設定】生徒は英語が苦手です。生徒のメッセージを受け取ったら、即座に日本語で「【即時添削】」を提示し、どこを直すと良いか優しく日本語で解説してから、英語で1文だけ簡単な返事や問いかけをしてください。"
                     )
                 elif "レベル2" in student_level:
                     sys_instruction = (
                         f"あなたはフレンドリーな英語の先生です。\n"
                         f"現在のお題: 「{selected_topic}」 / ターゲット文法: 「{target_grammar}」\n"
-                        f"【レベル2設定】生徒は英語が少し苦手です。生徒のメッセージを受け取ったら、すぐに簡潔な「【添削】」と、英語での自然な返答を1〜2文返してください。"
+                        f"【レベル2設定】生徒は英語が少し苦手です。生徒のメッセージを受け取ったら、すぐに簡潔な日本語の「【添削】」と、英語での自然な返答を1〜2文返してください。"
                     )
                 elif "レベル3" in student_level:
                     is_finishing = any(keyword in user_input.lower() for keyword in ["終わり", "おわり", "終了", "bye", "that's all", "finish"])
                     if is_finishing:
                         sys_instruction = (
                             f"あなたは英語の先生です。\n"
-                            f"【レベル3設定】生徒から会話を終わるという申し出がありました。これまでの会話全体を振り返り、良かった点や改善ポイント、総合的な添削・アドバイスをまとめて分かりやすく日本語と英語でフィードバックしてください。"
+                            f"【レベル3設定】生徒から会話を終わるという申し出がありました。\n"
+                            f"以下の【これまでの実際の会話履歴】をすべて読み込み、その内容に具体的に結びつけて、良かった点や改善ポイント、総合的なアドバイスを**すべて日本語で**分かりやすくフィードバックしてください。\n\n"
+                            f"【これまでの実際の会話履歴】\n{chat_history_text}"
                         )
                     else:
                         sys_instruction = (
                             f"あなたはフレンドリーな英語の先生です。\n"
                             f"現在のお題: 「{selected_topic}」 / ターゲット文法: 「{target_grammar}」\n"
-                            f"【レベル3設定】生徒は英語が普通レベルです。その都度細かい日本語での添削はせず、自然な英語の会話をテンポよく継続してください（返答は英語で1〜2文）。生徒が「終わり」と言うまでまとめの添削は控えてください。"
+                            f"【レベル3設定】その都度細かい日本語での添削はせず、自然な英語の会話をテンポよく継続してください（返答は英語で1〜2文）。生徒が「終わり」と言うまでまとめの添削は控えてください。"
                         )
                 else:  # レベル4
                     is_finishing = any(keyword in user_input.lower() for keyword in ["終わり", "おわり", "終了", "bye", "that's all", "finish"])
                     if is_finishing:
                         sys_instruction = (
                             f"あなたは優秀な英語の先生です。\n"
-                            f"【レベル4設定】生徒は英語が得意です。会話を終えるにあたり、これまでの会話全体を振り返り、よりネイティブらしい高度な表現や文法のバリエーションを含めた発展的な総合アドバイスをまとめてフィードバックしてください。"
+                            f"【レベル4設定】生徒は英語が得意です。会話を終えるにあたり、以下の【これまでの実際の会話履歴】をすべて読み込み、生徒が実際に使った表現を踏まえて、よりネイティブらしい高度な表現や文法のバリエーションを含めた発展的な総合アドバイスを**すべて日本語で**まとめてフィードバックしてください。\n\n"
+                            f"【これまでの実際の会話履歴】\n{chat_history_text}"
                         )
                     else:
                         sys_instruction = (
@@ -290,6 +306,6 @@ else:
 # --------------------------------------------------
 st.markdown("---")
 st.markdown(
-    "<p style='text-align: center; color: grey; font-size: small;'>© 2026 Talky AI 2.0 Shogo Takeuchi All Rights Reserved.</p>", 
+    "<p style='text-align: center; color: grey; font-size: small;'>© 2026 Talky AI 2.0 All Rights Reserved.</p>", 
     unsafe_allow_html=True
 )
