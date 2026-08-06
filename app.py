@@ -3,6 +3,7 @@ import requests
 from google import genai
 from google.genai import types
 import datetime
+import pandas as pd
 
 st.set_page_config(page_title="Talky AI 2.0", page_icon="🏫", layout="wide")
 
@@ -120,10 +121,10 @@ if st.sidebar.button("ログアウト"):
     st.session_state.authenticated = False
     st.rerun()
 
-# --- 【移動】著作権表示をサイドバーの下部へ配置 ---
+# 著作権表示をサイドバーの下部へ配置
 st.sidebar.markdown("---")
 st.sidebar.markdown(
-    "<p style='text-align: center; color: grey; font-size: small;'>© 2026 Talky AI 2.0 Shogo Takuchi All Rights Reserved.</p>", 
+    "<p style='text-align: center; color: grey; font-size: small;'>© 2026 Talky AI 2.0 All Rights Reserved.</p>", 
     unsafe_allow_html=True
 )
 
@@ -136,12 +137,71 @@ if st.session_state.get("role") == "teacher":
     tab1, tab2, tab3 = st.tabs(["📊 クラス別会話ログ", "📝 お題の管理", "📷 紙媒体の英作文評価"])
     
     with tab1:
-        st.subheader("生徒の会話ログ（クラス別タブから集約）")
+        st.subheader("生徒の会話ログ・やり取り確認 ＆ 総合評価")
         try:
             res = requests.get(f"{GAS_URL}?action=getLogs&schoolName={school_param}", timeout=10)
             logs = res.json()
             if logs:
-                st.dataframe(logs)
+                df_logs = pd.DataFrame(logs)
+                
+                if "timestamp" in df_logs.columns:
+                    df_logs["date"] = pd.to_datetime(df_logs["timestamp"]).dt.date
+                    
+                    # フィルター用のUI（日付 ＆ 生徒選択）
+                    col_f1, col_f2, col_f3 = st.columns(3)
+                    with col_f1:
+                        selected_date = st.date_input("📅 日付で絞り込み", value=None)
+                    with col_f2:
+                        student_list = sorted(df_logs["name"].dropna().unique().tolist())
+                        selected_student = st.selectbox("👤 生徒で絞り込み", ["すべて表示"] + student_list)
+                    with col_f3:
+                        selected_eval = st.selectbox("🏆 総合評価で絞り込み", ["すべて表示", "評価: A", "評価: B", "評価: C"])
+                    
+                    # 簡易的な自動評価判定ロジック（ボットの返答内容や発話量からA/B/Cを算出・付与）
+                    eval_results = []
+                    for _, row in df_logs.iterrows():
+                        text = str(row.get("botResponse", "")) + str(row.get("userInput", ""))
+                        # 簡単なキーワードや文字数等に基づく自動判定（必要に応じて調整可能）
+                        if "完璧" in text or "素晴らしい" in text or "excellent" in text.lower():
+                            eval_results.append("A")
+                        elif "もう少し" in text or "しい" in text or "try" in text.lower():
+                            eval_results.append("B")
+                        else:
+                            # やり取りの深さや内容に応じてデフォルト判定
+                            eval_results.append("B" if len(str(row.get("userInput", ""))) > 10 else "C")
+                    
+                    df_logs["evaluation"] = eval_results
+                    
+                    # 絞り込み処理
+                    filtered_df = df_logs.copy()
+                    if selected_date:
+                        filtered_df = filtered_df[filtered_df["date"] == selected_date]
+                    if selected_student != "すべて表示":
+                        filtered_df = filtered_df[filtered_df["name"] == selected_student]
+                    if selected_eval != "すべて表示":
+                        target_grade = selected_eval.replace("評価: ", "")
+                        filtered_df = filtered_df[filtered_df["evaluation"] == target_grade]
+                    
+                    st.markdown("---")
+                    
+                    if not filtered_df.empty:
+                        st.write("### 💬 やり取り履歴と総合評価ビュー")
+                        for idx, row in filtered_df.iterrows():
+                            grade = row.get("evaluation", "B")
+                            badge_color = "🟢" if grade == "A" else ("🟡" if grade == "B" else "🔴")
+                            
+                            with st.expander(f"{badge_color} 【評価: {grade}】 {row.get('timestamp')} | クラス: {row.get('className')} | 番号: {row.get('studentNumber')} | 氏名: {row.get('name')} (お題: {row.get('topic')})"):
+                                st.markdown(f"**🏆 総合評価:** `ランク {grade}`")
+                                st.markdown(f"**🧑‍🎓 生徒の発話:**\n> {row.get('userInput')}")
+                                st.markdown(f"**🤖 AIの返答・フィードバック:**\n{row.get('botResponse')}")
+                        
+                        st.markdown("---")
+                        st.subheader("📋 ログ一覧データ（評価つき）")
+                        st.dataframe(filtered_df.drop(columns=["date"], errors="ignore"))
+                    else:
+                        st.info("条件に一致するログはありません。")
+                else:
+                    st.dataframe(df_logs)
             else:
                 st.info("まだログはありません。")
         except Exception as e:
