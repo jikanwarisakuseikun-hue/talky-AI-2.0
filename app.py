@@ -120,6 +120,13 @@ if st.sidebar.button("ログアウト"):
     st.session_state.authenticated = False
     st.rerun()
 
+# --- 【移動】著作権表示をサイドバーの下部へ配置 ---
+st.sidebar.markdown("---")
+st.sidebar.markdown(
+    "<p style='text-align: center; color: grey; font-size: small;'>© 2026 Talky AI 2.0 Shogo Takuchi All Rights Reserved.</p>", 
+    unsafe_allow_html=True
+)
+
 # --------------------------------------------------
 # 2. 教師画面
 # --------------------------------------------------
@@ -300,12 +307,3 @@ else:
         st.session_state.messages.append({"role": "user", "content": user_input})
         st.session_state.messages.append({"role": "assistant", "content": bot_res})
         st.rerun()
-
-# --------------------------------------------------
-# フッター（著作権表示）
-# --------------------------------------------------
-st.markdown("---")
-st.markdown(
-    "<p style='text-align: center; color: grey; font-size: small;'>© 2026 Talky AI 2.0 All Rights Reserved.</p>", 
-    unsafe_allow_html=True
-)
