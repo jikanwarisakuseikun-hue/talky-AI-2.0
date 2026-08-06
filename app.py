@@ -147,7 +147,7 @@ if st.session_state.get("role") == "teacher":
                 if "timestamp" in df_logs.columns:
                     df_logs["date"] = pd.to_datetime(df_logs["timestamp"]).dt.date
                     
-                    # フィルター用のUI（日付 ＆ 生徒選択）
+                    # フィルター用のUI（日付 ＆ 生徒選択 ＆ 評価選択）
                     col_f1, col_f2, col_f3 = st.columns(3)
                     with col_f1:
                         selected_date = st.date_input("📅 日付で絞り込み", value=None)
@@ -157,22 +157,19 @@ if st.session_state.get("role") == "teacher":
                     with col_f3:
                         selected_eval = st.selectbox("🏆 総合評価で絞り込み", ["すべて表示", "評価: A", "評価: B", "評価: C"])
                     
-                    # 簡易的な自動評価判定ロジック（ボットの返答内容や発話量からA/B/Cを算出・付与）
+                    # 簡易的な自動評価判定ロジック
                     eval_results = []
                     for _, row in df_logs.iterrows():
                         text = str(row.get("botResponse", "")) + str(row.get("userInput", ""))
-                        # 簡単なキーワードや文字数等に基づく自動判定（必要に応じて調整可能）
                         if "完璧" in text or "素晴らしい" in text or "excellent" in text.lower():
                             eval_results.append("A")
                         elif "もう少し" in text or "しい" in text or "try" in text.lower():
                             eval_results.append("B")
                         else:
-                            # やり取りの深さや内容に応じてデフォルト判定
                             eval_results.append("B" if len(str(row.get("userInput", ""))) > 10 else "C")
                     
                     df_logs["evaluation"] = eval_results
                     
-                    # 絞り込み処理
                     filtered_df = df_logs.copy()
                     if selected_date:
                         filtered_df = filtered_df[filtered_df["date"] == selected_date]
@@ -214,23 +211,59 @@ if st.session_state.get("role") == "teacher":
         else:
             st.info("お題データがありません。")
             
-        with st.form("topic_form"):
-            st.write("#### 新規お題の追加")
-            t_class = st.text_input("対象クラス（例: 1B）")
-            t_topic = st.text_input("お題タイトル")
-            t_grammar = st.text_input("ターゲット文法")
-            if st.form_submit_button("お題を登録する"):
-                payload = {
-                    "action": "addTopic",
-                    "schoolName": school_param,
-                    "class_name": t_class,
-                    "topic": t_topic,
-                    "target_grammar": t_grammar,
-                    "teacher_id": st.session_state.user_id
-                }
-                requests.post(GAS_URL, json=payload)
-                st.success("お題を追加しました！")
-                st.rerun()
+        st.markdown("---")
+        
+        # 新規追加または上書き用のフォーム
+        tab_add, tab_edit = st.tabs(["➕ 新規お題の追加", "✏️ 既存お題の上書き編集"])
+        
+        with tab_add:
+            with st.form("topic_form_add"):
+                t_class = st.text_input("対象クラス（例: 1B）")
+                t_topic = st.text_input("お題タイトル")
+                t_grammar = st.text_input("ターゲット文法")
+                if st.form_submit_button("お題を登録する"):
+                    payload = {
+                        "action": "addTopic",
+                        "schoolName": school_param,
+                        "class_name": t_class,
+                        "topic": t_topic,
+                        "target_grammar": t_grammar,
+                        "teacher_id": st.session_state.user_id
+                    }
+                    requests.post(GAS_URL, json=payload)
+                    st.success("お題を追加しました！")
+                    st.rerun()
+
+        with tab_edit:
+            if all_topics:
+                # 選択しやすいように「クラス : お題タイトル」のリストを作成
+                topic_options = [f"クラス: {t.get('Class')} / お題: {t.get('Topic')}" for t in all_topics]
+                selected_topic_str = st.selectbox("編集するお題を選択", topic_options)
+                
+                # 選択されたインデックスを特定
+                selected_idx = topic_options.index(selected_topic_str)
+                target_topic_data = all_topics[selected_idx]
+                
+                with st.form("topic_form_edit"):
+                    edit_class = st.text_input("対象クラス", value=target_topic_data.get("Class", ""))
+                    edit_topic = st.text_input("お題タイトル", value=target_topic_data.get("Topic", ""))
+                    edit_grammar = st.text_input("ターゲット文法", value=target_topic_data.get("TargetGrammar", ""))
+                    
+                    if st.form_submit_button("変更を上書き保存する"):
+                        payload = {
+                            "action": "updateTopic",  # GAS側で対応するアクション名に合わせて調整してください
+                            "schoolName": school_param,
+                            "rowIndex": selected_idx + 2, # スプレッドシートの行番号（ヘッダー分+1）
+                            "class_name": edit_class,
+                            "topic": edit_topic,
+                            "target_grammar": edit_grammar,
+                            "teacher_id": st.session_state.user_id
+                        }
+                        requests.post(GAS_URL, json=payload)
+                        st.success("お題を上書き保存しました！")
+                        st.rerun()
+            else:
+                st.info("編集できるお題がありません。")
 
     with tab3:
         st.subheader("📷 紙媒体の英作文一括評価")
@@ -258,7 +291,6 @@ else:
     
     selected_topic = st.selectbox("本日のお題を選んでね：", topic_titles)
     
-    # お題が変更された場合に会話履歴を自動リセット
     if "current_topic" not in st.session_state:
         st.session_state.current_topic = selected_topic
 
@@ -267,7 +299,6 @@ else:
         st.session_state.messages = []
         st.rerun()
 
-    # 選択されたお題に紐づくターゲット文法を特定する
     target_grammar = "特になし（自由な会話）"
     for t in my_class_topics:
         if t.get("Topic") == selected_topic:
@@ -288,11 +319,9 @@ else:
         with st.chat_message("assistant", avatar="🤖"):
             with st.spinner("AI先生が考え中..."):
                 
-                # これまでの会話履歴を文字列としてまとめる
                 chat_history_text = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
                 chat_history_text += f"\nuser: {user_input}"
 
-                # レベルに応じたプロンプト（システム指示）の切り替え
                 if "レベル1" in student_level:
                     sys_instruction = (
                         f"あなたは非常に優しい英語の先生です。\n"
@@ -316,7 +345,7 @@ else:
                         )
                     else:
                         sys_instruction = (
-                            f"あなたはフレンドリーな英語の先生です。\n"
+                            f"`,ふりがな`あなたはフレンドリーな英語の先生です。\n"
                             f"現在のお題: 「{selected_topic}」 / ターゲット文法: 「{target_grammar}」\n"
                             f"【レベル3設定】その都度細かい日本語での添削はせず、自然な英語の会話をテンポよく継続してください（返答は英語で1〜2文）。生徒が「終わり」と言うまでまとめの添削は控えてください。"
                         )
@@ -335,7 +364,7 @@ else:
                             f"【レベル4設定】生徒は英語が得意です。細かい日本語の添削はせず、自然でスムーズな英語の会話をハイレベルかつテンポよく継続してください（返答は英語で1〜2文）。生徒が「終わり」と言うまでまとめの添削は控えてください。"
                         )
 
-                response = gemini_client.models.generate_content(
+                response = gemini_client.models.generate_content(code=None, 
                     model='gemini-2.5-flash',
                     contents=user_input,
                     config=types.GenerateContentConfig(
@@ -345,7 +374,6 @@ else:
                 bot_res = response.text
                 st.markdown(bot_res)
         
-        # 生徒の所属クラス名のタブへ自動保存
         try:
             now_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             payload = {
