@@ -65,7 +65,7 @@ if not st.session_state.authenticated:
 school_param = st.session_state.get('school_name')
 
 # --------------------------------------------------
-# お題データの取得（Topicsシートからクラス担当のTeacherIDを特定）
+# お題データの取得
 # --------------------------------------------------
 try:
     res_topics = requests.get(f"{GAS_URL}?action=getTopics&schoolName={school_param}", timeout=10)
@@ -87,7 +87,6 @@ else:
 
 st.session_state.assigned_teacher_id = assigned_teacher_id
 
-# Secretsから対応するTeacherIDのAPIキーを取得
 active_api_key = st.secrets.get("teachers", {}).get(assigned_teacher_id, {}).get("gemini_api_key", st.secrets.get("DEFAULT_API_KEY", ""))
 gemini_client = genai.Client(api_key=active_api_key)
 
@@ -102,7 +101,6 @@ if st.session_state.get('role') == 'student':
 st.sidebar.write(f"**氏名:** {st.session_state.get('user_name')}")
 st.sidebar.info(f"🔑 **担当AI (TeacherID):** `{assigned_teacher_id}`")
 
-# 生徒画面の場合のみ、サイドバーにレベル選択を表示
 student_level = "レベル2：英語が苦手な生徒・添削即時に"
 if st.session_state.get('role') == 'student':
     st.sidebar.markdown("---")
@@ -121,7 +119,6 @@ if st.sidebar.button("ログアウト"):
     st.session_state.authenticated = False
     st.rerun()
 
-# 著作権表示をサイドバーの下部へ配置
 st.sidebar.markdown("---")
 st.sidebar.markdown(
     "<p style='text-align: center; color: grey; font-size: small;'>© 2026 Talky AI 2.0 All Rights Reserved.</p>", 
@@ -141,16 +138,20 @@ if st.session_state.get("role") == "teacher":
         try:
             res = requests.get(f"{GAS_URL}?action=getLogs&schoolName={school_param}", timeout=10)
             logs = res.json()
+            
             if logs:
                 df_logs = pd.DataFrame(logs)
                 
                 if "timestamp" in df_logs.columns:
-                    df_logs["date"] = pd.to_datetime(df_logs["timestamp"]).dt.date
+                    # 日付型に変換
+                    df_logs["date"] = pd.to_datetime(df_logs["timestamp"], errors="coerce").dt.date
                     
-                    # フィルター用のUI（日付 ＆ 生徒選択 ＆ 評価選択）
+                    st.markdown("#### 🔍 ログの絞り込み設定")
                     col_f1, col_f2, col_f3 = st.columns(3)
+                    
                     with col_f1:
-                        selected_date = st.date_input("📅 日付で絞り込み", value=None)
+                        use_date_filter = st.checkbox("📅 日付で絞り込む", value=False)
+                        selected_date = st.date_input("日付を選択", value=datetime.date.today(), disabled=not use_date_filter)
                     with col_f2:
                         student_list = sorted(df_logs["name"].dropna().unique().tolist())
                         selected_student = st.selectbox("👤 生徒で絞り込み", ["すべて表示"] + student_list)
@@ -170,8 +171,9 @@ if st.session_state.get("role") == "teacher":
                     
                     df_logs["evaluation"] = eval_results
                     
+                    # 絞り込み処理
                     filtered_df = df_logs.copy()
-                    if selected_date:
+                    if use_date_filter:
                         filtered_df = filtered_df[filtered_df["date"] == selected_date]
                     if selected_student != "すべて表示":
                         filtered_df = filtered_df[filtered_df["name"] == selected_student]
@@ -182,7 +184,7 @@ if st.session_state.get("role") == "teacher":
                     st.markdown("---")
                     
                     if not filtered_df.empty:
-                        st.write("### 💬 やり取り履歴と総合評価ビュー")
+                        st.write(f"### 💬 やり取り履歴と総合評価ビュー （表示中: {len(filtered_df)}件 / 全{len(df_logs)}件中）")
                         for idx, row in filtered_df.iterrows():
                             grade = row.get("evaluation", "B")
                             badge_color = "🟢" if grade == "A" else ("🟡" if grade == "B" else "🔴")
@@ -196,11 +198,11 @@ if st.session_state.get("role") == "teacher":
                         st.subheader("📋 ログ一覧データ（評価つき）")
                         st.dataframe(filtered_df.drop(columns=["date"], errors="ignore"))
                     else:
-                        st.info("条件に一致するログはありません。")
+                        st.info("⚠️ 条件に一致するログはありません。（「日付で絞り込む」のチェックを外すか、生徒を「すべて表示」に戻してください）")
                 else:
                     st.dataframe(df_logs)
             else:
-                st.info("まだログはありません。")
+                st.info("まだサーバーにログが保存されていません。生徒アカウントから一度チャットを送信してみてください。")
         except Exception as e:
             st.warning(f"ログの取得に失敗しました: {e}")
 
@@ -213,7 +215,6 @@ if st.session_state.get("role") == "teacher":
             
         st.markdown("---")
         
-        # 新規追加または上書き用のフォーム
         tab_add, tab_edit = st.tabs(["➕ 新規お題の追加", "✏️ 既存お題の上書き編集"])
         
         with tab_add:
@@ -236,11 +237,9 @@ if st.session_state.get("role") == "teacher":
 
         with tab_edit:
             if all_topics:
-                # 選択しやすいように「クラス : お題タイトル」のリストを作成
                 topic_options = [f"クラス: {t.get('Class')} / お題: {t.get('Topic')}" for t in all_topics]
                 selected_topic_str = st.selectbox("編集するお題を選択", topic_options)
                 
-                # 選択されたインデックスを特定
                 selected_idx = topic_options.index(selected_topic_str)
                 target_topic_data = all_topics[selected_idx]
                 
@@ -251,9 +250,9 @@ if st.session_state.get("role") == "teacher":
                     
                     if st.form_submit_button("変更を上書き保存する"):
                         payload = {
-                            "action": "updateTopic",  # GAS側で対応するアクション名に合わせて調整してください
+                            "action": "updateTopic",
                             "schoolName": school_param,
-                            "rowIndex": selected_idx + 2, # スプレッドシートの行番号（ヘッダー分+1）
+                            "rowIndex": selected_idx + 2,
                             "class_name": edit_class,
                             "topic": edit_topic,
                             "target_grammar": edit_grammar,
@@ -345,7 +344,7 @@ else:
                         )
                     else:
                         sys_instruction = (
-                            f"`,ふりがな`あなたはフレンドリーな英語の先生です。\n"
+                            f"あなたはフレンドリーな英語の先生です。\n"
                             f"現在のお題: 「{selected_topic}」 / ターゲット文法: 「{target_grammar}」\n"
                             f"【レベル3設定】その都度細かい日本語での添削はせず、自然な英語の会話をテンポよく継続してください（返答は英語で1〜2文）。生徒が「終わり」と言うまでまとめの添削は控えてください。"
                         )
@@ -364,7 +363,7 @@ else:
                             f"【レベル4設定】生徒は英語が得意です。細かい日本語の添削はせず、自然でスムーズな英語の会話をハイレベルかつテンポよく継続してください（返答は英語で1〜2文）。生徒が「終わり」と言うまでまとめの添削は控えてください。"
                         )
 
-                response = gemini_client.models.generate_content(code=None, 
+                response = gemini_client.models.generate_content(
                     model='gemini-2.5-flash',
                     contents=user_input,
                     config=types.GenerateContentConfig(
