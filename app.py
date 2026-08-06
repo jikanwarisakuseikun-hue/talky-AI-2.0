@@ -101,6 +101,21 @@ if st.session_state.get('role') == 'student':
 st.sidebar.write(f"**氏名:** {st.session_state.get('user_name')}")
 st.sidebar.info(f"🔑 **担当AI (TeacherID):** `{assigned_teacher_id}`")
 
+# 生徒画面の場合のみ、サイドバーにレベル選択を表示
+student_level = "レベル2：英語が苦手な生徒・添削即時に"
+if st.session_state.get('role') == 'student':
+    st.sidebar.markdown("---")
+    st.sidebar.title("⚙️ 学習設定")
+    student_level = st.sidebar.selectbox(
+        "AIサポートレベルを選択：",
+        (
+            "レベル1：英語がすごい苦手な生徒・添削を即時に",
+            "レベル2：英語が苦手な生徒・添削即時に",
+            "レベル3：英語が普通な生徒・添削は終わりと言われた時にまとめて",
+            "レベル4：英語が得意な生徒・添削は終わりと言われた時にまとめて"
+        )
+    )
+
 if st.sidebar.button("ログアウト"):
     st.session_state.authenticated = False
     st.rerun()
@@ -196,15 +211,47 @@ else:
         
         with st.chat_message("assistant", avatar="🤖"):
             with st.spinner("AI先生が考え中..."):
-                # お題とターゲット文法をプロンプト（システム指示）に反映
-                sys_instruction = (
-                    f"あなたはフレンドリーな英語の先生です。\n"
-                    f"現在のお題: 「{selected_topic}」\n"
-                    f"ターゲット文法・ポイント: 「{target_grammar}」\n\n"
-                    f"中学生の英語の入力を優しく添削し、必要に応じてターゲット文法を使ったアドバイスや問いかけを含め、英語で1〜2文返答してください。"
-                    f"生徒が終わりと言うまで会話を継続してください。"
-                )
                 
+                # レベルに応じたプロンプト（システム指示）の切り替え
+                if "レベル1" in student_level:
+                    sys_instruction = (
+                        f"あなたは非常に優しい英語の先生です。\n"
+                        f"現在のお題: 「{selected_topic}」 / ターゲット文法: 「{target_grammar}」\n"
+                        f"【レベル1設定】生徒は英語がすごくだいぶ苦手です。生徒のメッセージを受け取ったら、即座に日本語で「【即時添削】」を提示し、どこを直すと良いか優しく解説してから、英語で1文だけ簡単な返事や問いかけをしてください。"
+                    )
+                elif "レベル2" in student_level:
+                    sys_instruction = (
+                        f"あなたはフレンドリーな英語の先生です。\n"
+                        f"現在のお題: 「{selected_topic}」 / ターゲット文法: 「{target_grammar}」\n"
+                        f"【レベル2設定】生徒は英語が少し苦手です。生徒のメッセージを受け取ったら、すぐに簡潔な「【添削】」と、英語での自然な返答を1〜2文返してください。"
+                    )
+                elif "レベル3" in student_level:
+                    is_finishing = any(keyword in user_input.lower() for keyword in ["終わり", "おわり", "終了", "bye", "that's all", "finish"])
+                    if is_finishing:
+                        sys_instruction = (
+                            f"あなたは英語の先生です。\n"
+                            f"【レベル3設定】生徒から会話を終わるという申し出がありました。これまでの会話全体を振り返り、良かった点や改善ポイント、総合的な添削・アドバイスをまとめて分かりやすく日本語と英語でフィードバックしてください。"
+                        )
+                    else:
+                        sys_instruction = (
+                            f"あなたはフレンドリーな英語の先生です。\n"
+                            f"現在のお題: 「{selected_topic}」 / ターゲット文法: 「{target_grammar}」\n"
+                            f"【レベル3設定】生徒は英語が普通レベルです。その都度細かい日本語での添削はせず、自然な英語の会話をテンポよく継続してください（返答は英語で1〜2文）。生徒が「終わり」と言うまでまとめの添削は控えてください。"
+                        )
+                else:  # レベル4
+                    is_finishing = any(keyword in user_input.lower() for keyword in ["終わり", "おわり", "終了", "bye", "that's all", "finish"])
+                    if is_finishing:
+                        sys_instruction = (
+                            f"あなたは優秀な英語の先生です。\n"
+                            f"【レベル4設定】生徒は英語が得意です。会話を終えるにあたり、これまでの会話全体を振り返り、よりネイティブらしい高度な表現や文法のバリエーションを含めた発展的な総合アドバイスをまとめてフィードバックしてください。"
+                        )
+                    else:
+                        sys_instruction = (
+                            f"あなたはフレンドリーな英語の先生です。\n"
+                            f"現在のお題: 「{selected_topic}」 / ターゲット文法: 「{target_grammar}」\n"
+                            f"【レベル4設定】生徒は英語が得意です。細かい日本語の添削はせず、自然でスムーズな英語の会話をハイレベルかつテンポよく継続してください（返答は英語で1〜2文）。生徒が「終わり」と言うまでまとめの添削は控えてください。"
+                        )
+
                 response = gemini_client.models.generate_content(
                     model='gemini-2.5-flash',
                     contents=user_input,
@@ -243,6 +290,6 @@ else:
 # --------------------------------------------------
 st.markdown("---")
 st.markdown(
-    "<p style='text-align: center; color: grey; font-size: small;'>© 2026 Talky AI 2.0 All Rights Reserved.</p>", 
+    "<p style='text-align: center; color: grey; font-size: small;'>© 2026 Talky AI 2.0 Shogo Takeuchi All Rights Reserved.</p>", 
     unsafe_allow_html=True
 )
