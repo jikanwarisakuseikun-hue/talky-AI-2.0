@@ -73,6 +73,7 @@ except Exception:
     all_topics = []
 
 assigned_teacher_id = "default"
+my_class_topics = []
 if st.session_state.get("role") == "student":
     my_class = st.session_state.get("class_name")
     my_class_topics = [t for t in all_topics if str(t.get("Class")) == str(my_class)]
@@ -157,7 +158,7 @@ if st.session_state.get("role") == "teacher":
         if uploaded_paper and st.button("AIで添削・評価する"):
             with st.spinner("AIが解析中..."):
                 response = gemini_client.models.generate_content(
-                    model='gemini-3.5-flash',
+                    model='gemini-2.5-flash',
                     contents=[
                         types.Part.from_bytes(data=uploaded_paper.read(), mime_type=uploaded_paper.type),
                         f"この手書き/印刷された英作文を読み取り、お題「{paper_topic}」に沿って中学生向けに優しく添削・評価してください。"
@@ -175,6 +176,13 @@ else:
     
     selected_topic = st.selectbox("本日のお題を選んでね：", topic_titles)
     
+    # 選択されたお題に紐づくターゲット文法を特定する
+    target_grammar = "特になし（自由な会話）"
+    for t in my_class_topics:
+        if t.get("Topic") == selected_topic:
+            target_grammar = t.get("TargetGrammar", "特になし")
+            break
+
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
@@ -188,17 +196,26 @@ else:
         
         with st.chat_message("assistant", avatar="🤖"):
             with st.spinner("AI先生が考え中..."):
+                # お題とターゲット文法をプロンプト（システム指示）に反映
+                sys_instruction = (
+                    f"あなたはフレンドリーな英語の先生です。\n"
+                    f"現在のお題: 「{selected_topic}」\n"
+                    f"ターゲット文法・ポイント: 「{target_grammar}」\n\n"
+                    f"中学生の英語の入力を優しく添削し、必要に応じてターゲット文法を使ったアドバイスや問いかけを含め、英語で1〜2文返答してください。"
+                    f"生徒が終わりと言うまで会話を継続してください。"
+                )
+                
                 response = gemini_client.models.generate_content(
-                    model='gemini-3.5-flash',
+                    model='gemini-2.5-flash',
                     contents=user_input,
                     config=types.GenerateContentConfig(
-                        system_instruction="あなたはフレンドリーな英語の先生です。中学生の英語を優しく添削し、英語で1〜2文返答してください。生徒が終わりと言うまで会話を継続して"
+                        system_instruction=sys_instruction
                     )
                 )
                 bot_res = response.text
                 st.markdown(bot_res)
         
-        # 生徒の所属クラス名（例: "1B"）のタブへ自動保存
+        # 生徒の所属クラス名のタブへ自動保存
         try:
             now_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             payload = {
@@ -220,3 +237,12 @@ else:
         st.session_state.messages.append({"role": "user", "content": user_input})
         st.session_state.messages.append({"role": "assistant", "content": bot_res})
         st.rerun()
+
+# --------------------------------------------------
+# フッター（著作権表示）
+# --------------------------------------------------
+st.markdown("---")
+st.markdown(
+    "<p style='text-align: center; color: grey; font-size: small;'>© 2026 Talky AI 2.0 All Rights Reserved.</p>", 
+    unsafe_allow_html=True
+)
