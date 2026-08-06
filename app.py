@@ -21,45 +21,58 @@ if not st.session_state.authenticated:
     input_pass = st.text_input("パスワード：", type="password")
     
     if st.button("ログイン"):
-        try:
-            res_schools = requests.get(f"{GAS_URL}?action=getSchools", timeout=10)
-            schools = res_schools.json()
-            
-            matched_user = None
-            matched_school = None
-            
-            for s in schools:
-                s_name = s.get("SchoolName")
-                res_users = requests.get(f"{GAS_URL}?action=getUsers&schoolName={s_name}", timeout=10)
-                users = res_users.json()
-                for u in users:
-                    if str(u.get("ID")) == str(input_id) and str(u.get("Password")) == str(input_pass):
-                        matched_user = u
-                        matched_school = s_name
-                        break
-                if matched_user:
-                    break
-            
-            if matched_user:
-                st.session_state.authenticated = True
-                st.session_state.role = matched_user.get("Role")
-                st.session_state.user_id = matched_user.get("ID")
-                st.session_state.user_name = matched_user.get("Name", "")
-                st.session_state.school_name = matched_school
-                
-                if st.session_state.role == "student":
-                    st.session_state.class_name = matched_user.get("Class")
-                    st.session_state.student_number = matched_user.get("StudentNumber")
-                else:
-                    st.session_state.class_name = ""
-                    st.session_state.student_number = ""
-                
-                st.success("ログイン成功！")
-                st.rerun()
-            else:
-                st.error("IDまたはパスワードが正しくありません。")
-        except Exception as e:
-            st.error(f"認証中にエラーが発生しました: {e}")
+        if not GAS_URL:
+            st.error("⚠️ GAS_URL が設定されていません。StreamlitのSecretsを確認してください。")
+        else:
+            with st.spinner("認証サーバーに接続中..."):
+                try:
+                    res_schools = requests.get(f"{GAS_URL}?action=getSchools", timeout=15)
+                    if res_schools.status_code != 200:
+                        st.error(f"サーバーエラー (Schools): ステータスコード {res_schools.status_code}")
+                        st.stop()
+                        
+                    schools = res_schools.json()
+                    
+                    matched_user = None
+                    matched_school = None
+                    
+                    for s in schools:
+                        s_name = s.get("SchoolName")
+                        if not s_name:
+                            continue
+                        res_users = requests.get(f"{GAS_URL}?action=getUsers&schoolName={s_name}", timeout=15)
+                        if res_users.status_code == 200:
+                            users = res_users.json()
+                            for u in users:
+                                if str(u.get("ID")) == str(input_id) and str(u.get("Password")) == str(input_pass):
+                                    matched_user = u
+                                    matched_school = s_name
+                                    break
+                        if matched_user:
+                            break
+                    
+                    if matched_user:
+                        st.session_state.authenticated = True
+                        st.session_state.role = matched_user.get("Role")
+                        st.session_state.user_id = matched_user.get("ID")
+                        st.session_state.user_name = matched_user.get("Name", "")
+                        st.session_state.school_name = matched_school
+                        
+                        if st.session_state.role == "student":
+                            st.session_state.class_name = matched_user.get("Class")
+                            st.session_state.student_number = matched_user.get("StudentNumber")
+                        else:
+                            st.session_state.class_name = ""
+                            st.session_state.student_number = ""
+                        
+                        st.success("ログイン成功！")
+                        st.rerun()
+                    else:
+                        st.error("IDまたはパスワードが正しくありません。")
+                except requests.exceptions.Timeout:
+                    st.error("⏱️ サーバーからの応答がタイムアウトしました。")
+                except Exception as e:
+                    st.error(f"認証中にエラーが発生しました: {e}")
     st.stop()
 
 school_param = st.session_state.get('school_name')
@@ -142,9 +155,15 @@ if st.session_state.get("role") == "teacher":
             if logs:
                 df_logs = pd.DataFrame(logs)
                 
-                if "timestamp" in df_logs.columns:
-                    # 日付型に変換
-                    df_logs["date"] = pd.to_datetime(df_logs["timestamp"], errors="coerce").dt.date
+                # 日付/時刻が入っている列を自動検出
+                date_col = None
+                for col in df_logs.columns:
+                    if "time" in col.lower() or "date" in col.lower() or "日時" in col or "日付" in col:
+                        date_col = col
+                        break
+                
+                if date_col:
+                    df_logs["date"] = pd.to_datetime(df_logs[date_col], errors="coerce").dt.date
                     
                     st.markdown("#### 🔍 ログの絞り込み設定")
                     col_f1, col_f2, col_f3 = st.columns(3)
@@ -153,8 +172,18 @@ if st.session_state.get("role") == "teacher":
                         use_date_filter = st.checkbox("📅 日付で絞り込む", value=False)
                         selected_date = st.date_input("日付を選択", value=datetime.date.today(), disabled=not use_date_filter)
                     with col_f2:
-                        student_list = sorted(df_logs["name"].dropna().unique().tolist())
-                        selected_student = st.selectbox("👤 生徒で絞り込み", ["すべて表示"] + student_list)
+                        name_col = next((c for c in df_logs.columns if "name" in c.lower() or "氏名" in c or "名前" in c), None)
+                        student_list = sorted(df_logs[name_col].dropna().unique().tolist()) if name_col else []
+                        
+                        # 生徒が2人以上ならプルダウン、1人なら固定表示
+                        if len(student_list) > 1:
+                            selected_student = st.selectbox("👤 生徒で絞り込み", ["すべて表示"] + student_list)
+                        elif len(student_list) == 1:
+                            st.write(f"👤 生徒: **{student_list[0]}**")
+                            selected_student = student_list[0]
+                        else:
+                            selected_student = "すべて表示"
+                            
                     with col_f3:
                         selected_eval = st.selectbox("🏆 総合評価で絞り込み", ["すべて表示", "評価: A", "評価: B", "評価: C"])
                     
@@ -175,8 +204,8 @@ if st.session_state.get("role") == "teacher":
                     filtered_df = df_logs.copy()
                     if use_date_filter:
                         filtered_df = filtered_df[filtered_df["date"] == selected_date]
-                    if selected_student != "すべて表示":
-                        filtered_df = filtered_df[filtered_df["name"] == selected_student]
+                    if selected_student != "すべて表示" and name_col:
+                        filtered_df = filtered_df[filtered_df[name_col] == selected_student]
                     if selected_eval != "すべて表示":
                         target_grade = selected_eval.replace("評価: ", "")
                         filtered_df = filtered_df[filtered_df["evaluation"] == target_grade]
@@ -189,20 +218,25 @@ if st.session_state.get("role") == "teacher":
                             grade = row.get("evaluation", "B")
                             badge_color = "🟢" if grade == "A" else ("🟡" if grade == "B" else "🔴")
                             
-                            with st.expander(f"{badge_color} 【評価: {grade}】 {row.get('timestamp')} | クラス: {row.get('className')} | 番号: {row.get('studentNumber')} | 氏名: {row.get('name')} (お題: {row.get('topic')})"):
+                            t_val = row.get(date_col, "")
+                            c_val = row.get("className", row.get("Class", ""))
+                            n_val = row.get("name", row.get("氏名", ""))
+                            top_val = row.get("topic", row.get("お題", ""))
+                            
+                            with st.expander(f"{badge_color} 【評価: {grade}】 {t_val} | クラス: {c_val} | 氏名: {n_val} (お題: {top_val})"):
                                 st.markdown(f"**🏆 総合評価:** `ランク {grade}`")
-                                st.markdown(f"**🧑‍🎓 生徒の発話:**\n> {row.get('userInput')}")
-                                st.markdown(f"**🤖 AIの返答・フィードバック:**\n{row.get('botResponse')}")
+                                st.markdown(f"**🧑‍🎓 生徒の発話:**\n> {row.get('userInput', '')}")
+                                st.markdown(f"**🤖 AIの返答・フィードバック:**\n{row.get('botResponse', '')}")
                         
                         st.markdown("---")
                         st.subheader("📋 ログ一覧データ（評価つき）")
                         st.dataframe(filtered_df.drop(columns=["date"], errors="ignore"))
                     else:
-                        st.info("⚠️ 条件に一致するログはありません。（「日付で絞り込む」のチェックを外すか、生徒を「すべて表示」に戻してください）")
+                        st.info("⚠️ 条件に一致するログはありません。")
                 else:
                     st.dataframe(df_logs)
             else:
-                st.info("まだサーバーにログが保存されていません。生徒アカウントから一度チャットを送信してみてください。")
+                st.info("まだサーバーにログが保存されていません。")
         except Exception as e:
             st.warning(f"ログの取得に失敗しました: {e}")
 
@@ -374,7 +408,10 @@ else:
                 st.markdown(bot_res)
         
         try:
-            now_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            # 日本時間（JST = UTC + 9時間）でタイムスタンプを生成
+            jst = datetime.timezone(datetime.timedelta(hours=9))
+            now_time = datetime.datetime.now(jst).strftime("%Y-%m-%d %H:%M:%S")
+            
             payload = {
                 "action": "addLog",
                 "schoolName": school_param,
