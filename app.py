@@ -15,7 +15,7 @@ if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 if not st.session_state.authenticated:
-    st.title("🏫 英語添削＆チャット ログイン")
+    st.title("🏫 Talky AI 2.0 ログイン")
     input_id = st.text_input("ID（教師ID または 生徒ID）：")
     input_pass = st.text_input("パスワード：", type="password")
     
@@ -108,7 +108,7 @@ if st.sidebar.button("ログアウト"):
 # 2. 教師画面
 # --------------------------------------------------
 if st.session_state.get("role") == "teacher":
-    st.title(f"👩‍🏫 教師用ダッシュボード ({school_param} / {st.session_state.get('user_name')}先生)")
+    st.title(f"👩‍🏫 Talky AI 2.0 教師用ダッシュボード ({school_param} / {st.session_state.get('user_name')}先生)")
     
     tab1, tab2, tab3 = st.tabs(["📊 クラス別会話ログ", "📝 お題の管理", "📷 紙媒体の英作文評価"])
     
@@ -170,7 +170,7 @@ if st.session_state.get("role") == "teacher":
 # 3. 生徒画面
 # --------------------------------------------------
 else:
-    st.title("🏫 中学生向け 英語添削チャット")
+    st.title("Talky AI 2.0")
     st.write(f"ようこそ、**{school_param} {st.session_state.get('class_name')}クラス 名簿{st.session_state.get('student_number')}番 {st.session_state.get('user_name')}さん**")
     
     selected_topic = st.selectbox("本日のお題を選んでね：", topic_titles)
@@ -192,7 +192,7 @@ else:
                     model='gemini-3.5-flash',
                     contents=user_input,
                     config=types.GenerateContentConfig(
-                        system_instruction="あなたはフレンドリーな英語の先生です。中学生の英語を優しく添削し、英語で1〜2文返答してください。"
+                        system_instruction="あなたはフレンドリーな英語の先生です。中学生の英語を優しく添削し、英語で1〜2文返答してください。生徒が終わりと言うまで会話を継続して"
                     )
                 )
                 bot_res = response.text
