@@ -189,7 +189,7 @@ else:
         with st.chat_message("assistant", avatar="🤖"):
             with st.spinner("AI先生が考え中..."):
                 response = gemini_client.models.generate_content(
-                    model='gemini-2.5-flash',
+                    model='gemini-3.5-flash',
                     contents=user_input,
                     config=types.GenerateContentConfig(
                         system_instruction="あなたはフレンドリーな英語の先生です。中学生の英語を優しく添削し、英語で1〜2文返答してください。"
