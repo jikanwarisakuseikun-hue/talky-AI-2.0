@@ -24,34 +24,21 @@ if not st.session_state.authenticated:
         if not GAS_URL:
             st.error("⚠️ GAS_URL が設定されていません。StreamlitのSecretsを確認してください。")
         else:
-            with st.spinner("認証サーバーに接続中..."):
+            with st.spinner("ログイン中..."):
                 try:
-                    res_schools = requests.get(f"{GAS_URL}?action=getSchools", timeout=15)
-                    if res_schools.status_code != 200:
-                        st.error(f"サーバーエラー (Schools): ステータスコード {res_schools.status_code}")
-                        st.stop()
+                    # ここから新しい高速ログイン処理
+                    payload = {
+                        "action": "login",
+                        "id": input_id,
+                        "password": input_pass
+                    }
+                    res = requests.post(GAS_URL, json=payload, timeout=15)
+                    data = res.json()
+                    
+                    if data.get("status") == "success":
+                        matched_user = data.get("user")
+                        matched_school = data.get("schoolName")
                         
-                    schools = res_schools.json()
-                    
-                    matched_user = None
-                    matched_school = None
-                    
-                    for s in schools:
-                        s_name = s.get("SchoolName")
-                        if not s_name:
-                            continue
-                        res_users = requests.get(f"{GAS_URL}?action=getUsers&schoolName={s_name}", timeout=15)
-                        if res_users.status_code == 200:
-                            users = res_users.json()
-                            for u in users:
-                                if str(u.get("ID")) == str(input_id) and str(u.get("Password")) == str(input_pass):
-                                    matched_user = u
-                                    matched_school = s_name
-                                    break
-                        if matched_user:
-                            break
-                    
-                    if matched_user:
                         st.session_state.authenticated = True
                         st.session_state.role = matched_user.get("Role")
                         st.session_state.user_id = matched_user.get("ID")
@@ -69,11 +56,16 @@ if not st.session_state.authenticated:
                         st.rerun()
                     else:
                         st.error("IDまたはパスワードが正しくありません。")
+                    # ここまでが新しいログイン処理
+
                 except requests.exceptions.Timeout:
                     st.error("⏱️ サーバーからの応答がタイムアウトしました。")
                 except Exception as e:
                     st.error(f"認証中にエラーが発生しました: {e}")
     st.stop()
+
+# ログイン成功後はここから先が動くので、ここは何も変えなくてOKです
+school_param = st.session_state.get('school_name')
 
 school_param = st.session_state.get('school_name')
 
