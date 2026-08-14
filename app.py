@@ -35,7 +35,6 @@ if not st.session_state.authenticated:
     if st.button("ログイン"):
         with st.spinner("ログイン中..."):
             try:
-                # マスターシートの「学校管理シート」から全学校のIDリストを取得
                 master_book = gc.open_by_key(master_sheet_id)
                 schools_list = master_book.worksheet("学校管理シート").get_all_records()
                 
@@ -43,7 +42,6 @@ if not st.session_state.authenticated:
                 matched_school = None
                 matched_school_id = None
                 
-                # 各学校のスプレッドシートを順に走査してユーザーを検索
                 for school in schools_list:
                     s_name = school["SchoolName"]
                     s_id = school["SheetID"]
@@ -51,7 +49,6 @@ if not st.session_state.authenticated:
                         school_book = gc.open_by_key(s_id)
                         users = school_book.worksheet("Users").get_all_records()
                         
-                        # IDとパスワードの一致確認（型違いを防ぐため文字列化して比較）
                         user = next((u for u in users if str(u.get("ID")) == str(input_id) and str(u.get("Password")) == str(input_pass)), None)
                         if user:
                             matched_user = user
@@ -88,7 +85,6 @@ if not st.session_state.authenticated:
 school_param = st.session_state.get('school_name')
 school_sheet_id = st.session_state.get('school_sheet_id')
 
-# 各学校のシートを取得するヘルパー関数
 def get_school_sheet(sheet_name):
     return gc.open_by_key(school_sheet_id).worksheet(sheet_name)
 
@@ -114,7 +110,15 @@ else:
 
 st.session_state.assigned_teacher_id = assigned_teacher_id
 
-active_api_key = st.secrets.get("teachers", {}).get(assigned_teacher_id, {}).get("gemini_api_key", st.secrets.get("DEFAULT_API_KEY", ""))
+# secrets.toml の設定に合わせたAPIキーの取得処理
+active_api_key = ""
+teachers_sec = st.secrets.get("teachers", {})
+if assigned_teacher_id in teachers_sec:
+    active_api_key = teachers_sec[assigned_teacher_id].get("gemini_api_key", "")
+
+if not active_api_key:
+    active_api_key = st.secrets.get("DEFAULT_API_KEY", "")
+
 gemini_client = genai.Client(api_key=active_api_key)
 
 # --------------------------------------------------
@@ -290,7 +294,6 @@ if st.session_state.get("role") == "teacher":
                     if st.form_submit_button("変更を上書き保存する"):
                         try:
                             sheet = get_school_sheet("Topics")
-                            # 1行目はヘッダーなので index + 2
                             row_idx = selected_idx + 2
                             sheet.update(range_name=f"A{row_idx}:D{row_idx}", values=[[edit_class, edit_topic, edit_grammar, st.session_state.user_id]])
                             st.success("お題を上書き保存しました！")
@@ -308,7 +311,7 @@ if st.session_state.get("role") == "teacher":
         if uploaded_paper and st.button("AIで添削・評価する"):
             with st.spinner("AIが解析中..."):
                 response = gemini_client.models.generate_content(
-                    model='gemini-3.5-flash',
+                    model='gemini-2.5-flash',
                     contents=[
                         types.Part.from_bytes(data=uploaded_paper.read(), mime_type=uploaded_paper.type),
                         f"This is a handwritten English composition about '{paper_topic}'. Please evaluate it and give advice in Japanese."
@@ -400,7 +403,7 @@ else:
                         )
 
                 response = gemini_client.models.generate_content(
-                    model='gemini-3.5-flash',
+                    model='gemini-2.5-flash',
                     contents=user_input,
                     config=types.GenerateContentConfig(
                         system_instruction=sys_instruction
@@ -413,7 +416,6 @@ else:
             jst = datetime.timezone(datetime.timedelta(hours=9))
             now_time = datetime.datetime.now(jst).strftime("%Y-%m-%d %H:%M:%S")
             
-            # 各学校の "Logs" シートに直接追加
             logs_sheet = get_school_sheet("Logs")
             logs_sheet.append_row([
                 now_time,
