@@ -1,5 +1,6 @@
 import streamlit as st
-import requests
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 from google import genai
 from google.genai import types
 import datetime
@@ -7,7 +8,19 @@ import pandas as pd
 
 st.set_page_config(page_title="Talky AI 2.0", page_icon="🏫", layout="wide")
 
-GAS_URL = st.secrets.get("GAS_URL", "")
+# --------------------------------------------------
+# gspread クライアントの初期化（サービスアカウント経由）
+# --------------------------------------------------
+@st.cache_resource
+def get_gspread_client():
+    creds_dict = st.secrets["gcp"]["gcp_service_account"]
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive"
+    ])
+    return gspread.authorize(creds)
+
+gc = get_gspread_client()
 
 # --------------------------------------------------
 # 1. ログイン認証画面
@@ -21,51 +34,45 @@ if not st.session_state.authenticated:
     input_pass = st.text_input("パスワード：", type="password")
     
     if st.button("ログイン"):
-        if not GAS_URL:
-            st.error("⚠️ GAS_URL が設定されていません。StreamlitのSecretsを確認してください。")
-        else:
-            with st.spinner("ログイン中..."):
-                try:
-                    # ここから新しい高速ログイン処理
-                    payload = {
-                        "action": "login",
-                        "id": input_id,
-                        "password": input_pass
-                    }
-                    res = requests.post(GAS_URL, json=payload, timeout=15)
-                    data = res.json()
+        with st.spinner("ログイン中..."):
+            try:
+                # 全校マスタースプレッドシート（"SchoolMaster"）から直接ユーザー情報を取得
+                # ※必要に応じてスプレッドシート名やファイルIDに変更してください
+                master_book = gc.open("SchoolMaster")
+                users_sheet = master_book.worksheet("Users")
+                all_users = users_sheet.get_all_records()
+                
+                matched_user = None
+                matched_school = None
+                
+                for row in all_users:
+                    if str(row.get("ID")) == str(input_id) and str(row.get("Password")) == str(input_pass):
+                        matched_user = row
+                        matched_school = row.get("SchoolName")
+                        break
+                
+                if matched_user:
+                    st.session_state.authenticated = True
+                    st.session_state.role = matched_user.get("Role")
+                    st.session_state.user_id = matched_user.get("ID")
+                    st.session_state.user_name = matched_user.get("Name", "")
+                    st.session_state.school_name = matched_school
                     
-                    if data.get("status") == "success":
-                        matched_user = data.get("user")
-                        matched_school = data.get("schoolName")
-                        
-                        st.session_state.authenticated = True
-                        st.session_state.role = matched_user.get("Role")
-                        st.session_state.user_id = matched_user.get("ID")
-                        st.session_state.user_name = matched_user.get("Name", "")
-                        st.session_state.school_name = matched_school
-                        
-                        if st.session_state.role == "student":
-                            st.session_state.class_name = matched_user.get("Class")
-                            st.session_state.student_number = matched_user.get("StudentNumber")
-                        else:
-                            st.session_state.class_name = ""
-                            st.session_state.student_number = ""
-                        
-                        st.success("ログイン成功！")
-                        st.rerun()
+                    if st.session_state.role == "student":
+                        st.session_state.class_name = matched_user.get("Class")
+                        st.session_state.student_number = matched_user.get("StudentNumber")
                     else:
-                        st.error("IDまたはパスワードが正しくありません。")
-                    # ここまでが新しいログイン処理
+                        st.session_state.class_name = ""
+                        st.session_state.student_number = ""
+                    
+                    st.success("ログイン成功！")
+                    st.rerun()
+                else:
+                    st.error("IDまたはパスワードが正しくありません。")
 
-                except requests.exceptions.Timeout:
-                    st.error("⏱️ サーバーからの応答がタイムアウトしました。")
-                except Exception as e:
-                    st.error(f"認証中にエラーが発生しました: {e}")
+            except Exception as e:
+                st.error(f"認証中にエラーが発生しました: {e}")
     st.stop()
-
-# ログイン成功後はここから先が動くので、ここは何も変えなくてOKです
-school_param = st.session_state.get('school_name')
 
 school_param = st.session_state.get('school_name')
 
@@ -73,8 +80,9 @@ school_param = st.session_state.get('school_name')
 # お題データの取得
 # --------------------------------------------------
 try:
-    res_topics = requests.get(f"{GAS_URL}?action=getTopics&schoolName={school_param}", timeout=10)
-    all_topics = res_topics.json()
+    school_book = gc.open(school_param)
+    topics_sheet = school_book.worksheet("Topics")
+    all_topics = topics_sheet.get_all_records()
 except Exception:
     all_topics = []
 
@@ -141,13 +149,13 @@ if st.session_state.get("role") == "teacher":
     with tab1:
         st.subheader("生徒の会話ログ・やり取り確認 ＆ 総合評価")
         try:
-            res = requests.get(f"{GAS_URL}?action=getLogs&schoolName={school_param}", timeout=10)
-            logs = res.json()
+            school_book = gc.open(school_param)
+            logs_sheet = school_book.worksheet("Logs")
+            logs = logs_sheet.get_all_records()
             
             if logs:
                 df_logs = pd.DataFrame(logs)
                 
-                # 日付/時刻が入っている列を自動検出
                 date_col = None
                 for col in df_logs.columns:
                     if "time" in col.lower() or "date" in col.lower() or "日時" in col or "日付" in col:
@@ -167,7 +175,6 @@ if st.session_state.get("role") == "teacher":
                         name_col = next((c for c in df_logs.columns if "name" in c.lower() or "氏名" in c or "名前" in c), None)
                         student_list = sorted(df_logs[name_col].dropna().unique().tolist()) if name_col else []
                         
-                        # 生徒が2人以上ならプルダウン、1人なら固定表示
                         if len(student_list) > 1:
                             selected_student = st.selectbox("👤 生徒で絞り込み", ["すべて表示"] + student_list)
                         elif len(student_list) == 1:
@@ -179,7 +186,6 @@ if st.session_state.get("role") == "teacher":
                     with col_f3:
                         selected_eval = st.selectbox("🏆 総合評価で絞り込み", ["すべて表示", "評価: A", "評価: B", "評価: C"])
                     
-                    # 簡易的な自動評価判定ロジック
                     eval_results = []
                     for _, row in df_logs.iterrows():
                         text = str(row.get("botResponse", "")) + str(row.get("userInput", ""))
@@ -192,7 +198,6 @@ if st.session_state.get("role") == "teacher":
                     
                     df_logs["evaluation"] = eval_results
                     
-                    # 絞り込み処理
                     filtered_df = df_logs.copy()
                     if use_date_filter:
                         filtered_df = filtered_df[filtered_df["date"] == selected_date]
@@ -249,17 +254,14 @@ if st.session_state.get("role") == "teacher":
                 t_topic = st.text_input("お題タイトル")
                 t_grammar = st.text_input("ターゲット文法")
                 if st.form_submit_button("お題を登録する"):
-                    payload = {
-                        "action": "addTopic",
-                        "schoolName": school_param,
-                        "class_name": t_class,
-                        "topic": t_topic,
-                        "target_grammar": t_grammar,
-                        "teacher_id": st.session_state.user_id
-                    }
-                    requests.post(GAS_URL, json=payload)
-                    st.success("お題を追加しました！")
-                    st.rerun()
+                    try:
+                        school_book = gc.open(school_param)
+                        topics_sheet = school_book.worksheet("Topics")
+                        topics_sheet.append_row([t_class, t_topic, t_grammar, st.session_state.user_id])
+                        st.success("お題を追加しました！")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"追加に失敗しました: {e}")
 
         with tab_edit:
             if all_topics:
@@ -275,18 +277,15 @@ if st.session_state.get("role") == "teacher":
                     edit_grammar = st.text_input("ターゲット文法", value=target_topic_data.get("TargetGrammar", ""))
                     
                     if st.form_submit_button("変更を上書き保存する"):
-                        payload = {
-                            "action": "updateTopic",
-                            "schoolName": school_param,
-                            "rowIndex": selected_idx + 2,
-                            "class_name": edit_class,
-                            "topic": edit_topic,
-                            "target_grammar": edit_grammar,
-                            "teacher_id": st.session_state.user_id
-                        }
-                        requests.post(GAS_URL, json=payload)
-                        st.success("お題を上書き保存しました！")
-                        st.rerun()
+                        try:
+                            school_book = gc.open(school_param)
+                            topics_sheet = school_book.worksheet("Topics")
+                            row_idx = selected_idx + 2  # ヘッダー行を考慮
+                            topics_sheet.update(f"A{row_idx}:D{row_idx}", [[edit_class, edit_topic, edit_grammar, st.session_state.user_id]])
+                            st.success("お題を上書き保存しました！")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"上書きに失敗しました: {e}")
             else:
                 st.info("編集できるお題がありません。")
 
@@ -400,23 +399,21 @@ else:
                 st.markdown(bot_res)
         
         try:
-            # 日本時間（JST = UTC + 9時間）でタイムスタンプを生成
             jst = datetime.timezone(datetime.timedelta(hours=9))
             now_time = datetime.datetime.now(jst).strftime("%Y-%m-%d %H:%M:%S")
             
-            payload = {
-                "action": "addLog",
-                "schoolName": school_param,
-                "timestamp": now_time,
-                "className": st.session_state.get("class_name"),
-                "studentNumber": st.session_state.get("student_number"),
-                "name": st.session_state.get("user_name"),
-                "topic": selected_topic,
-                "userInput": user_input,
-                "botResponse": bot_res,
-                "teacherComment": ""
-            }
-            requests.post(GAS_URL, json=payload, timeout=5)
+            school_book = gc.open(school_param)
+            logs_sheet = school_book.worksheet("Logs")
+            logs_sheet.append_row([
+                now_time,
+                st.session_state.get("class_name"),
+                st.session_state.get("student_number"),
+                st.session_state.get("user_name"),
+                selected_topic,
+                user_input,
+                bot_res,
+                ""
+            ])
         except Exception:
             pass
 
