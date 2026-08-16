@@ -142,7 +142,8 @@ def load_all_class_logs():
 try:
     all_users = get_school_sheet("Users").get_all_records()
     all_topics = get_school_sheet("Topics").get_all_records()
-except Exception:
+except Exception as e:
+    st.sidebar.error(f"Users/Topics読み込みエラー: {e}")
     all_users = []
     all_topics = []
 
