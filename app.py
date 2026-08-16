@@ -214,6 +214,12 @@ if st.session_state.get('role') == 'student':
             "レベル4：英語が得意な生徒・添削は終わりと言われた時にまとめて"
         )
     )
+    # --- デバッグ用（原因特定できたら削除してください）---
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 🔍 デバッグ情報")
+st.sidebar.code(f"tid = {repr(tid)}")
+st.sidebar.code(f"利用可能なteacher keys = {list(st.secrets.get('teachers', {}).keys())}")
+st.sidebar.code(f"tid が一致するか = {tid in st.secrets.get('teachers', {})}")
 
 if st.sidebar.button("ログアウト"):
     st.session_state.authenticated = False
