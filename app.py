@@ -115,20 +115,35 @@ st.session_state.assigned_teacher_id = assigned_teacher_id
 # APIキーの安全な取得処理 (secrets.toml対応)
 # --------------------------------------------------
 active_api_key = ""
+debug_info = "検索開始"
+
+# 1. secretsから教師用キーを取得する試み
 if "teachers" in st.secrets:
     teachers_sec = st.secrets["teachers"]
-    if assigned_teacher_id in teachers_sec:
-        active_api_key = teachers_sec[assigned_teacher_id].get("gemini_api_key", "")
+    tid = str(st.session_state.get("assigned_teacher_id", "")).strip()
+    
+    if tid in teachers_sec:
+        active_api_key = teachers_sec[tid].get("gemini_api_key", "")
+        debug_info = f"✅ 教師ID '{tid}' でキーが見つかりました"
+    else:
+        debug_info = f"❌ 教師ID '{tid}' が secrets.toml の [teachers] にありません"
+else:
+    debug_info = "❌ [teachers] セクション自体が secrets.toml にありません"
 
+# 2. デフォルトキーの確認
 if not active_api_key:
-    active_api_key = st.secrets.get("DEFAULT_API_KEY", "")
+    default_key = st.secrets.get("DEFAULT_API_KEY", "")
+    if default_key:
+        active_api_key = default_key
+        debug_info += " / ℹ️ デフォルトキーを使用"
+    else:
+        debug_info += " / ⚠️ デフォルトキーも未設定"
 
-if not active_api_key:
-    st.error("⚠️ Gemini APIキーが設定されていません。`secrets.toml` を確認してください。")
-    st.stop()
-
-gemini_client = genai.Client(api_key=active_api_key)
-
+# 3. Geminiクライアントの初期化 (Noneでもエラーで止めない)
+if active_api_key:
+    gemini_client = genai.Client(api_key=active_api_key)
+else:
+    gemini_client = None
 # --------------------------------------------------
 # サイドバー情報表示
 # --------------------------------------------------
@@ -138,7 +153,8 @@ if st.session_state.get('role') == 'student':
     st.sidebar.write(f"**クラス:** {st.session_state.get('class_name')}")
     st.sidebar.write(f"**名簿番号:** {st.session_state.get('student_number')}番")
 st.sidebar.write(f"**氏名:** {st.session_state.get('user_name')}")
-st.sidebar.info(f"🔑 **担当AI (TeacherID):** `{assigned_teacher_id}`")
+st.sidebar.info(f"🔑 **ID:** `{assigned_teacher_id}`")
+st.sidebar.warning(f"🔧 **API状態:** {debug_info}")
 
 student_level = "レベル2：英語が苦手な生徒・添削即時に"
 if st.session_state.get('role') == 'student':
