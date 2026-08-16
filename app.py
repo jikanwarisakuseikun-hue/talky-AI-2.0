@@ -89,7 +89,7 @@ def get_school_sheet(sheet_name):
     return gc.open_by_key(school_sheet_id).worksheet(sheet_name)
 
 # --------------------------------------------------
-# お題データの取得 (Topicsシート)
+# お題データの取得と教師IDの判定
 # --------------------------------------------------
 try:
     all_topics = get_school_sheet("Topics").get_all_records()
@@ -101,13 +101,19 @@ my_class_topics = []
 
 if st.session_state.get("role") == "student":
     my_class = st.session_state.get("class_name")
-    my_class_topics = [t for t in all_topics if str(t.get("Class")).strip() == str(my_class).strip()]
-    if my_class_topics:
-        assigned_teacher_id = str(my_class_topics[0].get("TeacherID", "default")).strip()
+    # 自分のクラスに該当する行をすべて抽出
+    my_class_topics = [t for t in all_topics if str(t.get("Class", "")).strip() == str(my_class).strip()]
+    
+    # 抽出した行の中にTeacherIDがあればデフォルト以外を優先して取得
+    for row in my_class_topics:
+        tid = str(row.get("TeacherID", "")).strip()
+        if tid:
+            assigned_teacher_id = tid
+            break
+            
     topic_titles = [t.get("Topic") for t in my_class_topics] if my_class_topics else ["フリートーク"]
 else:
-    assigned_teacher_id = str(st.session_state.get("user_id")).strip()
-    topic_titles = list(set([t.get("Topic") for t in all_topics])) if all_topics else ["フリートーク"]
+    assigned_teacher_id = str(st.session_state.get("user_id", "")).strip()
 
 st.session_state.assigned_teacher_id = assigned_teacher_id
 
@@ -325,6 +331,29 @@ else:
     
     selected_topic = st.selectbox("本日のお題を選んでね：", topic_titles)
     
+    # 選択されたお題の行データを特定し、その行のTeacherIDとターゲット文法を適用する
+    selected_topic_data = next((t for t in my_class_topics if t.get("Topic") == selected_topic), None)
+    if selected_topic_data:
+        assigned_teacher_id = str(selected_topic_data.get("TeacherID", "default")).strip()
+        target_grammar = selected_topic_data.get("TargetGrammar", "特になし")
+    else:
+        assigned_teacher_id = st.session_state.get("assigned_teacher_id", "default")
+        target_grammar = "特になし"
+        
+    st.session_state.assigned_teacher_id = assigned_teacher_id
+
+    # --------------------------------------------------
+    # 決定した assigned_teacher_id に応じてAPIキーを適用
+    # --------------------------------------------------
+    tid = st.session_state.get("assigned_teacher_id", "default")
+    teachers_sec = st.secrets.get("teachers", {})
+    active_api_key = teachers_sec.get(tid, {}).get("gemini_api_key", "")
+    
+    if not active_api_key:
+        active_api_key = st.secrets.get("DEFAULT_API_KEY", "")
+        
+    gemini_client = genai.Client(api_key=active_api_key)
+    
     if "current_topic" not in st.session_state:
         st.session_state.current_topic = selected_topic
 
@@ -332,12 +361,6 @@ else:
         st.session_state.current_topic = selected_topic
         st.session_state.messages = []
         st.rerun()
-
-    target_grammar = "特になし（自由な会話）"
-    for t in my_class_topics:
-        if t.get("Topic") == selected_topic:
-            target_grammar = t.get("TargetGrammar", "特になし")
-            break
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -356,6 +379,7 @@ else:
                 chat_history_text = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
                 chat_history_text += f"\nuser: {user_input}"
 
+                # サイドバーで選んだ「student_level」をここで判定して反映します
                 if "レベル1" in student_level:
                     sys_instruction = (
                         f"あなたは非常に優しい英語の先生です。\n"
@@ -399,7 +423,7 @@ else:
                         )
 
                 response = gemini_client.models.generate_content(
-                    model='gemini-3.5-flash',
+                    model='gemini-3.5-flash',  
                     contents=chat_history_text,
                     config=types.GenerateContentConfig(
                         system_instruction=sys_instruction
