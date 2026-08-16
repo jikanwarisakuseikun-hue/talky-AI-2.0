@@ -220,6 +220,13 @@ st.sidebar.markdown("### 🔍 デバッグ情報")
 st.sidebar.code(f"tid = {repr(tid)}")
 st.sidebar.code(f"利用可能なteacher keys = {list(st.secrets.get('teachers', {}).keys())}")
 st.sidebar.code(f"tid が一致するか = {tid in st.secrets.get('teachers', {})}")
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 🔍 デバッグ情報（詳細）")
+st.sidebar.code(f"user_id = {repr(st.session_state.get('user_id'))}")
+st.sidebar.code(f"student_data = {student_data}")
+st.sidebar.code(f"selected_topic = {repr(selected_topic) if 'selected_topic' in dir() else 'N/A'}")
+st.sidebar.code(f"selected_topic_data = {selected_topic_data if 'selected_topic_data' in dir() else 'N/A'}")
+st.sidebar.code(f"my_class_topics = {my_class_topics}")
 
 if st.sidebar.button("ログアウト"):
     st.session_state.authenticated = False
