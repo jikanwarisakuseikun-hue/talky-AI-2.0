@@ -22,7 +22,7 @@ gc = get_gspread_client()
 master_sheet_id = st.secrets["sheets"]["master_sheet_id"]
 
 # --------------------------------------------------
-# 1. ログイン認証画面
+# 1. ログイン認証画面 (Usersシートを全学校から走査)
 # --------------------------------------------------
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
@@ -43,8 +43,8 @@ if not st.session_state.authenticated:
                 matched_school_id = None
                 
                 for school in schools_list:
-                    s_name = school["SchoolName"]
-                    s_id = school["SheetID"]
+                    s_name = school.get("SchoolName")
+                    s_id = school.get("SheetID")
                     try:
                         school_book = gc.open_by_key(s_id)
                         users = school_book.worksheet("Users").get_all_records()
@@ -60,15 +60,15 @@ if not st.session_state.authenticated:
                 
                 if matched_user:
                     st.session_state.authenticated = True
-                    st.session_state.role = matched_user.get("Role")
-                    st.session_state.user_id = matched_user.get("ID")
-                    st.session_state.user_name = matched_user.get("Name", "")
+                    st.session_state.role = str(matched_user.get("Role", "")).strip().lower()
+                    st.session_state.user_id = str(matched_user.get("ID", "")).strip()
+                    st.session_state.user_name = str(matched_user.get("Name", ""))
                     st.session_state.school_name = matched_school
                     st.session_state.school_sheet_id = matched_school_id
                     
                     if st.session_state.role == "student":
-                        st.session_state.class_name = matched_user.get("Class")
-                        st.session_state.student_number = matched_user.get("StudentNumber")
+                        st.session_state.class_name = str(matched_user.get("Class", ""))
+                        st.session_state.student_number = matched_user.get("StudentNumber", "")
                     else:
                         st.session_state.class_name = ""
                         st.session_state.student_number = ""
@@ -89,7 +89,7 @@ def get_school_sheet(sheet_name):
     return gc.open_by_key(school_sheet_id).worksheet(sheet_name)
 
 # --------------------------------------------------
-# お題データの取得
+# お題データの取得 (Topicsシート)
 # --------------------------------------------------
 try:
     all_topics = get_school_sheet("Topics").get_all_records()
@@ -98,26 +98,34 @@ except Exception:
 
 assigned_teacher_id = "default"
 my_class_topics = []
+
 if st.session_state.get("role") == "student":
     my_class = st.session_state.get("class_name")
-    my_class_topics = [t for t in all_topics if str(t.get("Class")) == str(my_class)]
+    my_class_topics = [t for t in all_topics if str(t.get("Class")).strip() == str(my_class).strip()]
     if my_class_topics:
-        assigned_teacher_id = my_class_topics[0].get("TeacherID", "default")
+        assigned_teacher_id = str(my_class_topics[0].get("TeacherID", "default")).strip()
     topic_titles = [t.get("Topic") for t in my_class_topics] if my_class_topics else ["フリートーク"]
 else:
-    assigned_teacher_id = st.session_state.get("user_id")
+    assigned_teacher_id = str(st.session_state.get("user_id")).strip()
     topic_titles = list(set([t.get("Topic") for t in all_topics])) if all_topics else ["フリートーク"]
 
 st.session_state.assigned_teacher_id = assigned_teacher_id
 
-# secrets.toml の設定に合わせたAPIキーの取得処理
+# --------------------------------------------------
+# APIキーの安全な取得処理 (secrets.toml対応)
+# --------------------------------------------------
 active_api_key = ""
-teachers_sec = st.secrets.get("teachers", {})
-if assigned_teacher_id in teachers_sec:
-    active_api_key = teachers_sec[assigned_teacher_id].get("gemini_api_key", "")
+if "teachers" in st.secrets:
+    teachers_sec = st.secrets["teachers"]
+    if assigned_teacher_id in teachers_sec:
+        active_api_key = teachers_sec[assigned_teacher_id].get("gemini_api_key", "")
 
 if not active_api_key:
     active_api_key = st.secrets.get("DEFAULT_API_KEY", "")
+
+if not active_api_key:
+    st.error("⚠️ Gemini APIキーが設定されていません。`secrets.toml` を確認してください。")
+    st.stop()
 
 gemini_client = genai.Client(api_key=active_api_key)
 
@@ -168,37 +176,21 @@ if st.session_state.get("role") == "teacher":
         st.subheader("生徒の会話ログ・やり取り確認 ＆ 総合評価")
         try:
             logs = get_school_sheet("Logs").get_all_records()
-            
             if logs:
                 df_logs = pd.DataFrame(logs)
-                
-                date_col = None
-                for col in df_logs.columns:
-                    if "time" in col.lower() or "date" in col.lower() or "日時" in col or "日付" in col:
-                        date_col = col
-                        break
+                date_col = next((col for col in df_logs.columns if "time" in col.lower() or "date" in col.lower() or "日時" in col or "日付" in col), None)
                 
                 if date_col:
                     df_logs["date"] = pd.to_datetime(df_logs[date_col], errors="coerce").dt.date
                     
-                    st.markdown("#### 🔍 ログの絞り込み設定")
                     col_f1, col_f2, col_f3 = st.columns(3)
-                    
                     with col_f1:
                         use_date_filter = st.checkbox("📅 日付で絞り込む", value=False)
                         selected_date = st.date_input("日付を選択", value=datetime.date.today(), disabled=not use_date_filter)
                     with col_f2:
                         name_col = next((c for c in df_logs.columns if "name" in c.lower() or "氏名" in c or "名前" in c), None)
                         student_list = sorted(df_logs[name_col].dropna().unique().tolist()) if name_col else []
-                        
-                        if len(student_list) > 1:
-                            selected_student = st.selectbox("👤 生徒で絞り込み", ["すべて表示"] + student_list)
-                        elif len(student_list) == 1:
-                            st.write(f"👤 生徒: **{student_list[0]}**")
-                            selected_student = student_list[0]
-                        else:
-                            selected_student = "すべて表示"
-                            
+                        selected_student = st.selectbox("👤 生徒で絞り込み", ["すべて表示"] + student_list) if student_list else "すべて表示"
                     with col_f3:
                         selected_eval = st.selectbox("🏆 総合評価で絞り込み", ["すべて表示", "評価: A", "評価: B", "評価: C"])
                     
@@ -213,8 +205,8 @@ if st.session_state.get("role") == "teacher":
                             eval_results.append("B" if len(str(row.get("userInput", ""))) > 10 else "C")
                     
                     df_logs["evaluation"] = eval_results
-                    
                     filtered_df = df_logs.copy()
+                    
                     if use_date_filter:
                         filtered_df = filtered_df[filtered_df["date"] == selected_date]
                     if selected_student != "すべて表示" and name_col:
@@ -224,32 +216,22 @@ if st.session_state.get("role") == "teacher":
                         filtered_df = filtered_df[filtered_df["evaluation"] == target_grade]
                     
                     st.markdown("---")
-                    
                     if not filtered_df.empty:
-                        st.write(f"### 💬 やり取り履歴と総合評価ビュー （表示中: {len(filtered_df)}件 / 全{len(df_logs)}件中）")
                         for idx, row in filtered_df.iterrows():
                             grade = row.get("evaluation", "B")
                             badge_color = "🟢" if grade == "A" else ("🟡" if grade == "B" else "🔴")
-                            
-                            t_val = row.get(date_col, "")
-                            c_val = row.get("className", row.get("Class", ""))
-                            n_val = row.get("name", row.get("氏名", ""))
-                            top_val = row.get("topic", row.get("お題", ""))
-                            
-                            with st.expander(f"{badge_color} 【評価: {grade}】 {t_val} | クラス: {c_val} | 氏名: {n_val} (お題: {top_val})"):
+                            with st.expander(f"{badge_color} 【評価: {grade}】 {row.get(date_col, '')} | クラス: {row.get('className', '')} | 氏名: {row.get('name', '')} (お題: {row.get('topic', '')})"):
                                 st.markdown(f"**🏆 総合評価:** `ランク {grade}`")
                                 st.markdown(f"**🧑‍🎓 生徒の発話:**\n> {row.get('userInput', '')}")
                                 st.markdown(f"**🤖 AIの返答・フィードバック:**\n{row.get('botResponse', '')}")
-                        
                         st.markdown("---")
-                        st.subheader("📋 ログ一覧データ（評価つき）")
                         st.dataframe(filtered_df.drop(columns=["date"], errors="ignore"))
                     else:
                         st.info("⚠️ 条件に一致するログはありません。")
                 else:
                     st.dataframe(df_logs)
             else:
-                st.info("まだサーバーにログが保存されていません。")
+                st.info("まだログが保存されていません。")
         except Exception as e:
             st.warning(f"ログの取得に失敗しました: {e}")
 
@@ -261,12 +243,11 @@ if st.session_state.get("role") == "teacher":
             st.info("お題データがありません。")
             
         st.markdown("---")
-        
         tab_add, tab_edit = st.tabs(["➕ 新規お題の追加", "✏️ 既存お題の上書き編集"])
         
         with tab_add:
             with st.form("topic_form_add"):
-                t_class = st.text_input("対象クラス（例: 1B）")
+                t_class = st.text_input("対象クラス（例: 1年2組）")
                 t_topic = st.text_input("お題タイトル")
                 t_grammar = st.text_input("ターゲット文法")
                 if st.form_submit_button("お題を登録する"):
@@ -282,7 +263,6 @@ if st.session_state.get("role") == "teacher":
             if all_topics:
                 topic_options = [f"クラス: {t.get('Class')} / お題: {t.get('Topic')}" for t in all_topics]
                 selected_topic_str = st.selectbox("編集するお題を選択", topic_options)
-                
                 selected_idx = topic_options.index(selected_topic_str)
                 target_topic_data = all_topics[selected_idx]
                 
@@ -402,7 +382,6 @@ else:
                             f"【レベル4設定】生徒は英語が得意です。細かい日本語の添削はせず、自然でスムーズな英語の会話をハイレベルかつテンポよく継続してください（返答は英語で1〜2文）。生徒が「終わり」と言うまでまとめの添削は控えてください。"
                         )
 
-                # AIに履歴を含めたコンテキストを渡すように修正
                 response = gemini_client.models.generate_content(
                     model='gemini-3.5-flash',
                     contents=chat_history_text,
