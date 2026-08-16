@@ -227,6 +227,11 @@ st.sidebar.code(f"student_data = {student_data}")
 st.sidebar.code(f"selected_topic = {repr(selected_topic) if 'selected_topic' in dir() else 'N/A'}")
 st.sidebar.code(f"selected_topic_data = {selected_topic_data if 'selected_topic_data' in dir() else 'N/A'}")
 st.sidebar.code(f"my_class_topics = {my_class_topics}")
+st.sidebar.code(f"school_sheet_id = {repr(school_sheet_id)}")
+st.sidebar.code(f"all_users件数 = {len(all_users)}")
+if all_users:
+    st.sidebar.code(f"1件目のキー一覧 = {list(all_users[0].keys())}")
+    st.sidebar.code(f"IDカラムの値一覧 = {[repr(u.get('ID')) for u in all_users]}")
 
 if st.sidebar.button("ログアウト"):
     st.session_state.authenticated = False
