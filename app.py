@@ -100,23 +100,22 @@ assigned_teacher_id = "default"
 my_class_topics = []
 
 if st.session_state.get("role") == "student":
-    my_class = st.session_state.get("class_name")
-    # 自分のクラスに該当する行をすべて抽出
-    my_class_topics = [t for t in all_topics if str(t.get("Class", "")).strip() == str(my_class).strip()]
+    # 1. Usersシートから全生徒データを取得
+    users_sheet = get_school_sheet("Users")
+    all_users = users_sheet.get_all_records()
     
-    # 抽出した行の中にTeacherIDがあればデフォルト以外を優先して取得
-    for row in my_class_topics:
-        tid = str(row.get("TeacherID", "")).strip()
-        if tid:
-            assigned_teacher_id = tid
-            break
-            
-    topic_titles = [t.get("Topic") for t in my_class_topics] if my_class_topics else ["フリートーク"]
-else:
-    assigned_teacher_id = str(st.session_state.get("user_id", "")).strip()
-
-st.session_state.assigned_teacher_id = assigned_teacher_id
-
+    # 2. ログイン中の生徒と一致する行を探す
+    # (Nameで特定していますが、もし別のキーなら変えてください)
+    student_data = next((u for u in all_users if str(u.get("Name", "")).strip() == str(st.session_state.get("user_name")).strip()), None)
+    
+    # 3. G列(TeacherID)を取得
+    if student_data:
+        # ※ここが「TeacherID」という名前でG1セルに入っている前提です
+        assigned_teacher_id = str(student_data.get("TeacherID", "default")).strip()
+    else:
+        assigned_teacher_id = "default"
+        
+    st.session_state.assigned_teacher_id = assigned_teacher_id
 # --------------------------------------------------
 # APIキーの安全な取得処理 (secrets.toml対応)
 # --------------------------------------------------
