@@ -402,9 +402,10 @@ else:
                             f"【レベル4設定】生徒は英語が得意です。細かい日本語の添削はせず、自然でスムーズな英語の会話をハイレベルかつテンポよく継続してください（返答は英語で1〜2文）。生徒が「終わり」と言うまでまとめの添削は控えてください。"
                         )
 
+                # AIに履歴を含めたコンテキストを渡すように修正
                 response = gemini_client.models.generate_content(
                     model='gemini-2.5-flash',
-                    contents=user_input,
+                    contents=chat_history_text,
                     config=types.GenerateContentConfig(
                         system_instruction=sys_instruction
                     )
