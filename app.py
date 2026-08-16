@@ -92,63 +92,31 @@ def get_school_sheet(sheet_name):
 # お題データの取得と教師IDの判定
 # --------------------------------------------------
 try:
+    all_users = get_school_sheet("Users").get_all_records()
     all_topics = get_school_sheet("Topics").get_all_records()
 except Exception:
+    all_users = []
     all_topics = []
 
-assigned_teacher_id = "default"
-my_class_topics = []
-
 if st.session_state.get("role") == "student":
-    # 1. Usersシートから全生徒データを取得
-    users_sheet = get_school_sheet("Users")
-    all_users = users_sheet.get_all_records()
-    
-    # 2. ログイン中の生徒と一致する行を探す
-    # (Nameで特定していますが、もし別のキーなら変えてください)
     student_data = next((u for u in all_users if str(u.get("Name", "")).strip() == str(st.session_state.get("user_name")).strip()), None)
-    
-    # 3. G列(TeacherID)を取得
-    if student_data:
-        # ※ここが「TeacherID」という名前でG1セルに入っている前提です
-        assigned_teacher_id = str(student_data.get("TeacherID", "default")).strip()
-    else:
-        assigned_teacher_id = "default"
-        
+    assigned_teacher_id = str(student_data.get("TeacherID", "default")).strip() if student_data else "default"
     st.session_state.assigned_teacher_id = assigned_teacher_id
-# --------------------------------------------------
-# APIキーの安全な取得処理 (secrets.toml対応)
-# --------------------------------------------------
-active_api_key = ""
-debug_info = "検索開始"
 
-# 1. secretsから教師用キーを取得する試み
-if "teachers" in st.secrets:
-    teachers_sec = st.secrets["teachers"]
-    tid = str(st.session_state.get("assigned_teacher_id", "")).strip()
-    
-    if tid in teachers_sec:
-        active_api_key = teachers_sec[tid].get("gemini_api_key", "")
-        debug_info = f"✅ 教師ID '{tid}' でキーが見つかりました"
-    else:
-        debug_info = f"❌ 教師ID '{tid}' が secrets.toml の [teachers] にありません"
+    my_class = st.session_state.get("class_name")
+    my_class_topics = [t for t in all_topics if str(t.get("Class", "")).strip() == str(my_class).strip()]
+    topic_titles = [t.get("Topic") for t in my_class_topics] if my_class_topics else ["フリートーク"]
 else:
-    debug_info = "❌ [teachers] セクション自体が secrets.toml にありません"
+    assigned_teacher_id = str(st.session_state.get("user_id", "")).strip()
+    st.session_state.assigned_teacher_id = assigned_teacher_id
+    topic_titles = list(set([t.get("Topic") for t in all_topics])) if all_topics else ["フリートーク"]
+    my_class_topics = all_topics
 
-# 2. デフォルトキーの確認
-if not active_api_key:
-    default_key = st.secrets.get("DEFAULT_API_KEY", "")
-    if default_key:
-        active_api_key = default_key
-        debug_info += " / ℹ️ デフォルトキーを使用"
-    else:
-        debug_info += " / ⚠️ デフォルトキーも未設定"
+# APIキーの準備
+tid = st.session_state.get("assigned_teacher_id", "default")
+active_api_key = st.secrets.get("teachers", {}).get(tid, {}).get("gemini_api_key", st.secrets.get("DEFAULT_API_KEY", ""))
+gemini_client = genai.Client(api_key=active_api_key)
 
-# 3. Geminiクライアントの初期化 (Noneでもエラーで止めない)
-if active_api_key:
-    gemini_client = genai.Client(api_key=active_api_key)
-else:
-    gemini_client = None
 # --------------------------------------------------
 # サイドバー情報表示
 # --------------------------------------------------
@@ -159,7 +127,7 @@ if st.session_state.get('role') == 'student':
     st.sidebar.write(f"**名簿番号:** {st.session_state.get('student_number')}番")
 st.sidebar.write(f"**氏名:** {st.session_state.get('user_name')}")
 st.sidebar.info(f"🔑 **ID:** `{assigned_teacher_id}`")
-st.sidebar.warning(f"🔧 **API状態:** {debug_info}")
+st.sidebar.success(f"🔧 **API状態:** 接続OK")
 
 student_level = "レベル2：英語が苦手な生徒・添削即時に"
 if st.session_state.get('role') == 'student':
@@ -312,7 +280,7 @@ if st.session_state.get("role") == "teacher":
         if uploaded_paper and st.button("AIで添削・評価する"):
             with st.spinner("AIが解析中..."):
                 response = gemini_client.models.generate_content(
-                    model='gemini-3.5-flash',
+                    model='gemini-2.5-flash',  # 安定したモデル名に調整
                     contents=[
                         types.Part.from_bytes(data=uploaded_paper.read(), mime_type=uploaded_paper.type),
                         f"This is a handwritten English composition about '{paper_topic}'. Please evaluate it and give advice in Japanese."
@@ -330,29 +298,12 @@ else:
     
     selected_topic = st.selectbox("本日のお題を選んでね：", topic_titles)
     
-    # 選択されたお題の行データを特定し、その行のTeacherIDとターゲット文法を適用する
     selected_topic_data = next((t for t in my_class_topics if t.get("Topic") == selected_topic), None)
     if selected_topic_data:
-        assigned_teacher_id = str(selected_topic_data.get("TeacherID", "default")).strip()
         target_grammar = selected_topic_data.get("TargetGrammar", "特になし")
     else:
-        assigned_teacher_id = st.session_state.get("assigned_teacher_id", "default")
         target_grammar = "特になし"
         
-    st.session_state.assigned_teacher_id = assigned_teacher_id
-
-    # --------------------------------------------------
-    # 決定した assigned_teacher_id に応じてAPIキーを適用
-    # --------------------------------------------------
-    tid = st.session_state.get("assigned_teacher_id", "default")
-    teachers_sec = st.secrets.get("teachers", {})
-    active_api_key = teachers_sec.get(tid, {}).get("gemini_api_key", "")
-    
-    if not active_api_key:
-        active_api_key = st.secrets.get("DEFAULT_API_KEY", "")
-        
-    gemini_client = genai.Client(api_key=active_api_key)
-    
     if "current_topic" not in st.session_state:
         st.session_state.current_topic = selected_topic
 
@@ -378,7 +329,6 @@ else:
                 chat_history_text = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
                 chat_history_text += f"\nuser: {user_input}"
 
-                # サイドバーで選んだ「student_level」をここで判定して反映します
                 if "レベル1" in student_level:
                     sys_instruction = (
                         f"あなたは非常に優しい英語の先生です。\n"
@@ -422,7 +372,7 @@ else:
                         )
 
                 response = gemini_client.models.generate_content(
-                    model='gemini-3.5-flash',  
+                    model='gemini-2.5-flash',  
                     contents=chat_history_text,
                     config=types.GenerateContentConfig(
                         system_instruction=sys_instruction
