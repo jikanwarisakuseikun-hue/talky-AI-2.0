@@ -311,7 +311,7 @@ if st.session_state.get("role") == "teacher":
         if uploaded_paper and st.button("AIで添削・評価する"):
             with st.spinner("AIが解析中..."):
                 response = gemini_client.models.generate_content(
-                    model='gemini-2.5-flash',
+                    model='gemini-3.5-flash',
                     contents=[
                         types.Part.from_bytes(data=uploaded_paper.read(), mime_type=uploaded_paper.type),
                         f"This is a handwritten English composition about '{paper_topic}'. Please evaluate it and give advice in Japanese."
@@ -404,7 +404,7 @@ else:
 
                 # AIに履歴を含めたコンテキストを渡すように修正
                 response = gemini_client.models.generate_content(
-                    model='gemini-2.5-flash',
+                    model='gemini-3.5-flash',
                     contents=chat_history_text,
                     config=types.GenerateContentConfig(
                         system_instruction=sys_instruction
