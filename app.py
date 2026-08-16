@@ -215,25 +215,7 @@ if st.session_state.get('role') == 'student':
             "レベル4：英語が得意な生徒・添削は終わりと言われた時にまとめて"
         )
     )
-    # --- デバッグ用（原因特定できたら削除してください）---
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 🔍 デバッグ情報")
-st.sidebar.code(f"tid = {repr(tid)}")
-st.sidebar.code(f"利用可能なteacher keys = {list(st.secrets.get('teachers', {}).keys())}")
-st.sidebar.code(f"tid が一致するか = {tid in st.secrets.get('teachers', {})}")
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 🔍 デバッグ情報（詳細）")
-st.sidebar.code(f"user_id = {repr(st.session_state.get('user_id'))}")
-st.sidebar.code(f"student_data = {student_data}")
-st.sidebar.code(f"selected_topic = {repr(selected_topic) if 'selected_topic' in dir() else 'N/A'}")
-st.sidebar.code(f"selected_topic_data = {selected_topic_data if 'selected_topic_data' in dir() else 'N/A'}")
-st.sidebar.code(f"my_class_topics = {my_class_topics}")
-st.sidebar.code(f"school_sheet_id = {repr(school_sheet_id)}")
-st.sidebar.code(f"all_users件数 = {len(all_users)}")
-if all_users:
-    st.sidebar.code(f"1件目のキー一覧 = {list(all_users[0].keys())}")
-    st.sidebar.code(f"IDカラムの値一覧 = {[repr(u.get('ID')) for u in all_users]}")
-
+    
 if st.sidebar.button("ログアウト"):
     st.session_state.authenticated = False
     st.rerun()
